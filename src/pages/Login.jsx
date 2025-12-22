@@ -1,56 +1,89 @@
 import React, { useState } from 'react';
-import { signInWithEmailAndPassword, signInAnonymously, createUserWithEmailAndPassword, updateProfile, signOut } from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, signOut } from 'firebase/auth';
 import { auth, db } from '../config/firebase';
 import { useNavigate, useParams } from 'react-router-dom';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 export default function Login() {
   const [isSignUp, setIsSignUp] = useState(false);
-  const [name, setName] = useState(''); const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [phone, setPhone] = useState(''); const [confirmPassword, setConfirmPassword] = useState('');
-  const [loading, setLoading] = useState(false); const [error, setError] = useState('');
+  const [name, setName] = useState(''); 
+  const [email, setEmail] = useState(''); 
+  const [password, setPassword] = useState(''); 
+  const [phone, setPhone] = useState(''); 
+  const [confirmPassword, setConfirmPassword] = useState('');
+  
+  const [loading, setLoading] = useState(false); 
+  const [error, setError] = useState('');
   
   const navigate = useNavigate();
-  // Captura o ID da loja da URL (ex: renovosbbs)
-  // Se não tiver (acesso direto na raiz), usa 'renovosbbs' como fallback
   const params = useParams();
+  
+  // SEU E-MAIL MESTRE (Para autocompletar no login)
+  const MASTER_EMAIL = 'gutoabduch@gmail.com';
+
+  // Captura o ID da loja da URL (ex: renovosbbs) ou usa fallback
   const shopId = params.shopId || 'renovosbbs';
 
-  const APP_ID = 'default-app-id'; 
-  const MASTER_PASSWORD = 'Curly#Admin!2025';
-
   const handleLogin = async (e) => {
-    e.preventDefault(); setLoading(true); setError('');
+    e.preventDefault(); 
+    setLoading(true); 
+    setError('');
+    
     try { 
         await signInWithEmailAndPassword(auth, email, password); 
-        // REDIRECIONAMENTO DINÂMICO: Vai para a loja correta
+        // REDIRECIONAMENTO DINÂMICO
         navigate(`/${shopId}/admin/services`); 
     } 
-    catch (err) { setError("Credenciais inválidas."); } finally { setLoading(false); }
+    catch (err) { 
+        console.error(err);
+        setError("Credenciais inválidas."); 
+    } 
+    finally { 
+        setLoading(false); 
+    }
   };
 
   const handleSignUp = async (e) => {
-    e.preventDefault(); setLoading(true); setError('');
-    if (password !== confirmPassword) { setError("Senhas não conferem."); setLoading(false); return; }
+    e.preventDefault(); 
+    setLoading(true); 
+    setError('');
+    
+    if (password !== confirmPassword) { 
+        setError("Senhas não conferem."); 
+        setLoading(false); 
+        return; 
+    }
+    
     try {
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       await updateProfile(cred.user, { displayName: name });
-      await setDoc(doc(db, `artifacts/${APP_ID}/public/data/users/${cred.user.uid}`), { name, email, phone, role: 'User', createdAt: serverTimestamp() });
-      await signOut(auth); alert("Conta criada! Aguarde aprovação do admin."); setIsSignUp(false);
-    } catch (err) { setError(err.message); } finally { setLoading(false); }
+      
+      // Salva o usuário DENTRO da pasta da loja específica (shopId)
+      await setDoc(doc(db, `artifacts/${shopId}/public/data/users/${cred.user.uid}`), { 
+          name, 
+          email, 
+          phone, 
+          role: 'User', 
+          createdAt: serverTimestamp() 
+      });
+      
+      await signOut(auth); 
+      alert("Conta criada! Aguarde aprovação do admin."); 
+      setIsSignUp(false);
+    } catch (err) { 
+        setError(err.message); 
+    } finally { 
+        setLoading(false); 
+    }
   };
 
-  const handleDemo = async () => {
-    if (prompt("Senha Mestra:") !== MASTER_PASSWORD) return alert("Senha incorreta!");
-    setLoading(true);
-    try { 
-        const c = await signInAnonymously(auth); 
-        await setDoc(doc(db, `artifacts/${APP_ID}/public/data/users/${c.user.uid}`), { 
-            name: 'Admin Teste', role: 'Admin', isProtected: true, createdAt: serverTimestamp() 
-        }); 
-        // REDIRECIONAMENTO DINÂMICO
-        navigate(`/${shopId}/admin/services`); 
-    }
-    catch (err) { setError(err.message); } finally { setLoading(false); }
+  // Função do botão "Login Master"
+  const handleMasterAccess = () => {
+    setEmail(MASTER_EMAIL);
+    // Foca no campo de senha para você digitar
+    const passInput = document.querySelector('input[type="password"]');
+    if(passInput) passInput.focus();
+    setError('Digite sua senha de administrador.');
   };
 
   return (
@@ -75,6 +108,7 @@ export default function Login() {
 
         <form onSubmit={isSignUp ? handleSignUp : handleLogin} className="space-y-5">
           {isSignUp && <><input className="input-field" placeholder="Nome da Barbearia" value={name} onChange={e=>setName(e.target.value)} required /><input className="input-field" placeholder="Telefone" value={phone} onChange={e=>setPhone(e.target.value)} required /></>}
+          
           <input className="input-field" placeholder="E-mail Corporativo" value={email} onChange={e=>setEmail(e.target.value)} required />
           <input className="input-field" placeholder="Senha" type="password" value={password} onChange={e=>setPassword(e.target.value)} required />
           {isSignUp && <input className="input-field" placeholder="Confirmar Senha" type="password" value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} required />}
@@ -89,7 +123,11 @@ export default function Login() {
               <p className="text-xs text-[#666] cursor-pointer hover:text-[#D4AF37] transition" onClick={()=>setIsSignUp(!isSignUp)}>
                 {isSignUp ? 'Já possui conta? Fazer Login' : 'Não tem conta? Cadastrar Nova Barbearia'}
               </p>
-              {!isSignUp && <button type="button" onClick={handleDemo} className="text-[10px] text-[#333] hover:text-[#555] transition">Login Master (Admin)</button>}
+              {!isSignUp && (
+                  <button type="button" onClick={handleMasterAccess} className="text-[10px] text-[#333] hover:text-[#555] transition">
+                      Login Master (Admin)
+                  </button>
+              )}
           </div>
         </form>
       </div>

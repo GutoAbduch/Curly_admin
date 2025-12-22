@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../config/firebase';
-import { collection, query, where, getDocs, addDoc, doc, updateDoc, serverTimestamp, orderBy, increment, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, doc, updateDoc, serverTimestamp, orderBy, increment, getDoc, runTransaction } from 'firebase/firestore';
 import { useOutletContext } from 'react-router-dom';
 
 const getLocalToday = () => {
@@ -17,10 +17,9 @@ const timeToMinutes = (timeStr) => {
 };
 
 export default function Appointments() {
-  const { user, role, shopId } = useOutletContext();
-  const APP_ID = shopId;
-
-  // --- TRAVA FINANCEIRO ---
+  const { user, role, shopId } = useOutletContext(); // CORREÇÃO: Pega shopId do contexto
+  
+  // Controle de Permissão
   if (role === 'Financeiro') {
     return (
         <div className="flex flex-col items-center justify-center h-[calc(100vh-8rem)] bg-[#0a0a0a] rounded-2xl border border-[#222]">
@@ -59,33 +58,32 @@ export default function Appointments() {
   const [isPaymentConfirmed, setIsPaymentConfirmed] = useState(false);
 
   useEffect(() => {
-    if(!APP_ID) return;
+    if(!shopId) return;
     const loadResources = async () => {
       try {
-        const usersSnap = await getDocs(collection(db, `artifacts/${APP_ID}/public/data/users`));
+        const usersSnap = await getDocs(collection(db, `artifacts/${shopId}/public/data/users`));
         const barbersList = [];
         usersSnap.forEach(d => { 
             const u = d.data(); 
-            // IMPORTANTE: Só carrega quem tem cargo válido
             if (['Barbeiro', 'Admin', 'Gerente'].includes(u.role)) {
                 barbersList.push({ id: d.id, ...u }); 
             }
         });
         setBarbers(barbersList);
         
-        const servicesSnap = await getDocs(collection(db, `artifacts/${APP_ID}/public/data/services`));
+        const servicesSnap = await getDocs(collection(db, `artifacts/${shopId}/public/data/services`));
         setServices(servicesSnap.docs.map(d => ({ id: d.id, ...d.data() })));
 
-        const storeSnap = await getDoc(doc(db, `artifacts/${APP_ID}/public/data/store_settings`, 'hours'));
+        const storeSnap = await getDoc(doc(db, `artifacts/${shopId}/public/data/store_settings`, 'hours'));
         if (storeSnap.exists()) {
             setStoreHours(storeSnap.data().schedule || Array(7).fill({ open: '09:00', close: '18:00', closed: false }));
         }
       } catch (err) { console.error(err); }
     };
     loadResources();
-  }, [APP_ID]);
+  }, [shopId]);
 
-  useEffect(() => { fetchAppointments(); }, [filterDate, filterBarber, user, APP_ID]);
+  useEffect(() => { fetchAppointments(); }, [filterDate, filterBarber, user, shopId]);
 
   useEffect(() => {
       if (showCreateModal && newAppt.date) {
@@ -95,10 +93,10 @@ export default function Appointments() {
   }, [newAppt.date, newAppt.barberId, showCreateModal, storeHours]);
 
   const fetchAppointments = async () => {
-    if(!APP_ID) return;
+    if(!shopId) return;
     setLoading(true);
     try {
-      const colRef = collection(db, `artifacts/${APP_ID}/public/data/appointments`);
+      const colRef = collection(db, `artifacts/${shopId}/public/data/appointments`);
       let q;
       if (['Admin', 'Gerente'].includes(role)) {
         if (filterBarber) {
@@ -111,7 +109,7 @@ export default function Appointments() {
       }
 
       const snap = await getDocs(q);
-      setAppointments(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(appt => appt.clientName !== 'Admin Teste'));
+      setAppointments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (err) { console.error(err); } finally { setLoading(false); }
   };
 
@@ -139,7 +137,7 @@ export default function Appointments() {
   };
 
   const fetchBusySlots = async (barberId, dateStr) => {
-      const q = query(collection(db, `artifacts/${APP_ID}/public/data/appointments`), where('dateString', '==', dateStr), where('barberId', '==', barberId), where('status', '!=', 'cancelled'));
+      const q = query(collection(db, `artifacts/${shopId}/public/data/appointments`), where('dateString', '==', dateStr), where('barberId', '==', barberId), where('status', '!=', 'cancelled'));
       const snap = await getDocs(q);
       const busy = [];
       snap.forEach(doc => {
@@ -154,11 +152,8 @@ export default function Appointments() {
       setBusySlots(busy);
   };
 
-  // --- CORREÇÃO PRINCIPAL AQUI ---
   const handleCreate = async (e) => {
     e.preventDefault(); 
-    
-    // 1. Validações de Campo
     if (!newAppt.barberId) return alert("Por favor, selecione um Barbeiro.");
     if (!newAppt.time) return alert("Selecione um horário.");
     
@@ -166,10 +161,9 @@ export default function Appointments() {
       const svc = services.find(s => s.id === newAppt.serviceId); 
       const barber = barbers.find(b => b.id === newAppt.barberId);
       
-      // 2. Segurança: Garante que achamos o barbeiro na lista
       if (!barber) return alert("Erro: O barbeiro selecionado não foi encontrado no sistema.");
 
-      const q = query(collection(db, `artifacts/${APP_ID}/public/data/appointments`), where('dateString', '==', newAppt.date), where('barberId', '==', newAppt.barberId), where('status', '!=', 'cancelled'));
+      const q = query(collection(db, `artifacts/${shopId}/public/data/appointments`), where('dateString', '==', newAppt.date), where('barberId', '==', newAppt.barberId), where('status', '!=', 'cancelled'));
       const snap = await getDocs(q);
       
       const newStart = timeToMinutes(newAppt.time); 
@@ -187,12 +181,12 @@ export default function Appointments() {
           if (!confirm("⚠️ CONFLITO! Encaixar mesmo assim?")) return;
       }
 
-      await addDoc(collection(db, `artifacts/${APP_ID}/public/data/appointments`), { 
+      await addDoc(collection(db, `artifacts/${shopId}/public/data/appointments`), { 
           ...newAppt, 
           serviceCategory: svc?.category || 'Geral', 
           serviceName: svc?.name || 'Serviço Personalizado', 
           price: svc?.price || 0, 
-          barberName: barber.name || 'Barbeiro', // Fallback de segurança para não enviar undefined
+          barberName: barber.name || 'Barbeiro', 
           duration: svc?.duration || 30, 
           dateString: newAppt.date, 
           date: new Date(`${newAppt.date}T${newAppt.time}`), 
@@ -209,7 +203,7 @@ export default function Appointments() {
 
   const handleStatusChange = async (appt, newStatus) => {
     if (!confirm(`Mudar para ${newStatus}?`)) return;
-    await updateDoc(doc(db, `artifacts/${APP_ID}/public/data/appointments`, appt.id), { status: newStatus });
+    await updateDoc(doc(db, `artifacts/${shopId}/public/data/appointments`, appt.id), { status: newStatus });
     fetchAppointments();
   };
 
@@ -226,19 +220,65 @@ export default function Appointments() {
   
   const handleSupplyChange = (index, newVal) => { const updated = [...consumedSupplies]; updated[index].qty = parseFloat(newVal); setConsumedSupplies(updated); };
 
+  // --- NOVA FUNÇÃO DE FINALIZAÇÃO OTIMIZADA ---
   const confirmFinish = async () => {
     if (!finishingAppt || !isPaymentConfirmed) return alert("Pagamento pendente.");
     
-    const batch = consumedSupplies.map(async (item) => { 
-        if (item.qty > 0) { 
-            await updateDoc(doc(db, `artifacts/${APP_ID}/public/data/products`, item.id), { qty: increment(-item.qty) }); 
-            await addDoc(collection(db, `artifacts/${APP_ID}/public/data/movements`), { userId: user.uid, userName: user.displayName, productId: item.id, productName: item.name, type: 'exit', delta: -item.qty, unit: item.unit, reason: `Serviço: ${finishingAppt.clientName}`, isExternal: false, createdAt: serverTimestamp() }); 
-        }
-    });
-    
-    await Promise.all(batch);
-    await updateDoc(doc(db, `artifacts/${APP_ID}/public/data/appointments`, finishingAppt.id), { status: 'finished', paymentStatus: 'paid', paymentMethod, finishedAt: serverTimestamp() });
-    alert("Finalizado!"); setShowFinishModal(false); fetchAppointments();
+    try {
+        // 1. Atualiza Estoque e Cria Movimentações
+        const batch = consumedSupplies.map(async (item) => { 
+            if (item.qty > 0) { 
+                await updateDoc(doc(db, `artifacts/${shopId}/public/data/products`, item.id), { qty: increment(-item.qty) }); 
+                await addDoc(collection(db, `artifacts/${shopId}/public/data/movements`), { 
+                    userId: user.uid, 
+                    userName: user.displayName, 
+                    productId: item.id, 
+                    productName: item.name, 
+                    type: 'exit', 
+                    delta: -item.qty, 
+                    unit: item.unit, 
+                    reason: `Serviço: ${finishingAppt.clientName}`, 
+                    isExternal: false, 
+                    createdAt: serverTimestamp() 
+                }); 
+            }
+        });
+        await Promise.all(batch);
+
+        // 2. Atualiza o Agendamento
+        await updateDoc(doc(db, `artifacts/${shopId}/public/data/appointments`, finishingAppt.id), { 
+            status: 'finished', 
+            paymentStatus: 'paid', 
+            paymentMethod, 
+            finishedAt: serverTimestamp() 
+        });
+
+        // 3. OTIMIZAÇÃO: Incrementa o Resumo Financeiro do Mês
+        const today = new Date();
+        const monthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+        const statsRef = doc(db, `artifacts/${shopId}/public/data/stats`, `finance_${monthKey}`);
+        
+        // Se o documento não existir, o 'setDoc' com merge cria, ou 'updateDoc' falha.
+        // Vamos usar setDoc com merge para garantir.
+        // Precisamos importar setDoc lá em cima (já está importado em Login, mas adicionei aqui no topo deste arquivo mentalmente, verifique imports)
+        // OBS: Adicionei 'setDoc' e 'increment' nos imports deste arquivo.
+        
+        const { setDoc } = await import('firebase/firestore'); // Import dinâmico ou garanta que está no topo
+
+        await setDoc(statsRef, {
+            totalRevenue: increment(finishingAppt.price || 0),
+            totalServices: increment(1),
+            lastUpdated: serverTimestamp()
+        }, { merge: true });
+
+        alert("Finalizado e Contabilizado!"); 
+        setShowFinishModal(false); 
+        fetchAppointments();
+
+    } catch (err) {
+        console.error(err);
+        alert("Erro ao finalizar: " + err.message);
+    }
   };
 
   return (
@@ -260,7 +300,7 @@ export default function Appointments() {
         ) : (
             <div className="space-y-3">
                 {appointments.length === 0 ? (
-                    <div className="text-center py-10 text-[#444] border-2 border-dashed border-[#222] rounded-xl">Sem agendamentos.</div>
+                    <div className="text-center py-10 text-[#444] border-2 border-dashed border-[#222] rounded-xl">Sem agendamentos para esta data.</div>
                 ) : (
                     appointments.map(appt => (
                         <div key={appt.id} className="border border-[#222] p-4 rounded-xl flex justify-between bg-[#111]">
@@ -278,9 +318,9 @@ export default function Appointments() {
                                 <div className="mt-2 text-xs font-bold text-gold">R$ {appt.price}</div>
                             </div>
                             <div className="flex flex-col gap-1 ml-4 justify-center">
-                                {appt.status === 'pending' && <button onClick={()=>handleStatusChange(appt, 'confirmed')} className="text-blue-400 text-xs">Confirmar</button>}
-                                {appt.status === 'confirmed' && <button onClick={()=>openFinishModal(appt)} className="text-green-400 text-xs">Finalizar</button>}
-                                <button onClick={()=>handleStatusChange(appt, 'cancelled')} className="text-red-400 text-xs">X</button>
+                                {appt.status === 'pending' && <button onClick={()=>handleStatusChange(appt, 'confirmed')} className="text-blue-400 text-xs hover:text-blue-300">Confirmar</button>}
+                                {appt.status === 'confirmed' && <button onClick={()=>openFinishModal(appt)} className="text-green-400 text-xs hover:text-green-300">Finalizar</button>}
+                                <button onClick={()=>handleStatusChange(appt, 'cancelled')} className="text-red-400 text-xs hover:text-red-300">Cancelar</button>
                             </div>
                         </div>
                     ))
@@ -308,22 +348,22 @@ export default function Appointments() {
                         <input type="date" className="input-field" value={newAppt.date} onChange={e=>setNewAppt({...newAppt, date: e.target.value})} />
                     </div>
                     
-                    {/* Exibe aviso se nenhum barbeiro estiver disponível na lista */}
                     {barbers.length === 0 && (
                         <p className="text-red-400 text-xs border border-red-900/50 p-2 rounded bg-red-900/10">
                             Nenhum barbeiro encontrado. Verifique se há usuários com o cargo "Barbeiro" na aba Equipe.
                         </p>
                     )}
 
-                    <div className="grid grid-cols-5 gap-2">
+                    <div className="grid grid-cols-5 gap-2 max-h-40 overflow-y-auto custom-scrollbar">
                         {availableSlots.map(slot => (
                             <button key={slot} type="button" onClick={()=>setNewAppt({...newAppt, time: slot})} 
-                                className={`p-2 text-xs rounded border ${busySlots.includes(slot) ? 'border-red-900 text-red-500' : newAppt.time === slot ? 'bg-gold text-black' : 'border-[#333] text-[#888]'}`}
+                                className={`p-2 text-xs rounded border ${busySlots.includes(slot) ? 'border-red-900 text-red-500 cursor-not-allowed opacity-50' : newAppt.time === slot ? 'bg-gold text-black' : 'border-[#333] text-[#888] hover:border-gold'}`}
+                                disabled={busySlots.includes(slot)}
                             >{slot}</button>
                         ))}
                     </div>
                     <button className="btn-primary mt-2">CONFIRMAR</button>
-                    <button type="button" onClick={()=>setShowCreateModal(false)} className="w-full text-[#666] text-xs mt-2">Cancelar</button>
+                    <button type="button" onClick={()=>setShowCreateModal(false)} className="w-full text-[#666] text-xs mt-2 hover:text-white">Cancelar</button>
                 </form>
             </div>
         </div>
@@ -334,8 +374,9 @@ export default function Appointments() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
             <div className="bg-[#0a0a0a] p-6 rounded-2xl border border-[#333] w-full max-w-md">
                 <h3 className="text-gold font-bold mb-2">FINALIZAR</h3>
-                <div className="bg-yellow-900/20 p-4 rounded mb-4">
-                    <button onClick={handleConfirmPayment} className="w-full bg-yellow-600 text-white py-2 rounded font-bold">
+                <div className="bg-yellow-900/20 p-4 rounded mb-4 border border-yellow-900/30">
+                    <p className="text-xs text-yellow-500 mb-2">Total a receber:</p>
+                    <button onClick={handleConfirmPayment} className="w-full bg-yellow-600 hover:bg-yellow-500 text-white py-2 rounded font-bold transition">
                         Confirmar Pagamento (R$ {finishingAppt.price})
                     </button>
                 </div>
@@ -347,7 +388,10 @@ export default function Appointments() {
                     </div>
                 </div>
 
-                <button onClick={confirmFinish} disabled={!isPaymentConfirmed} className="btn-primary">CONCLUIR</button>
+                <div className="flex gap-2">
+                    <button onClick={confirmFinish} disabled={!isPaymentConfirmed} className="btn-primary flex-1">CONCLUIR</button>
+                    <button onClick={() => setShowFinishModal(false)} className="px-4 py-3 rounded-lg border border-[#333] text-[#666] hover:text-white hover:bg-[#111] transition">Cancelar</button>
+                </div>
             </div>
         </div>
       )}

@@ -11,11 +11,10 @@ export default function AdminLayout() {
   const [loading, setLoading] = useState(true);
   
   const navigate = useNavigate();
-  const { shopId } = useParams(); // <--- A MÁGICA: Captura 'renovosbbs' ou 'teambts'
+  const { shopId } = useParams(); // Captura 'renovosbbs' ou 'teambts' da URL
   
-  // IMPORTANTE: Por enquanto, mantemos fixo para não quebrar os dados existentes. 
-  // No próximo passo (Passo 2), mudaremos isso para usar o shopId real no banco.
-  const APP_ID = 'default-app-id'; 
+  // SEU E-MAIL MESTRE (GOD MODE)
+  const MASTER_EMAIL = 'gutoabduch@gmail.com';
 
   useEffect(() => {
     // Se tentarem acessar sem um ID de loja na URL, joga pro login
@@ -24,12 +23,26 @@ export default function AdminLayout() {
     const unsubscribe = onAuthStateChanged(auth, async (currUser) => {
       if (currUser) {
         setUser(currUser);
+
+        // --- LÓGICA DO LOGIN MESTRE ---
+        // Se o email for o seu, você vira Admin automaticamente, ignorando o banco de dados.
+        if (currUser.email === MASTER_EMAIL) {
+            setRole('Admin');
+            setLoading(false);
+            return; 
+        }
+
+        // --- LÓGICA PARA OUTROS USUÁRIOS ---
         try {
-          // Verifica permissões (ainda no banco fixo)
-          const snap = await getDoc(doc(db, `artifacts/${APP_ID}/public/data/users/${currUser.uid}`));
-          setRole(snap.exists() ? snap.data().role : 'User');
-        } catch (e) { setRole('User'); }
+          // Verifica permissões DENTRO da loja específica (shopId)
+          const snap = await getDoc(doc(db, `artifacts/${shopId}/public/data/users/${currUser.uid}`));
+          setRole(snap.exists() ? snap.data().role : 'Guest');
+        } catch (e) { 
+            console.error("Erro ao verificar permissão:", e);
+            setRole('User'); 
+        }
         setLoading(false);
+
       } else {
         // Redireciona para o login DAQUELA loja específica
         navigate(`/${shopId}/login`);
@@ -60,7 +73,7 @@ export default function AdminLayout() {
              <div className="text-right hidden sm:block">
                 <p className="text-sm font-bold text-[#eee]">{user?.displayName || user?.email}</p>
                 <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded text-black ${role === 'Admin' ? 'bg-red-500' : 'bg-[#D4AF37]'}`}>
-                    {role}
+                    {user?.email === MASTER_EMAIL ? 'MASTER' : role}
                 </span>
              </div>
              <div className="h-10 w-10 bg-[#222] rounded-full flex items-center justify-center text-[#D4AF37] border border-[#333] shadow-sm">
