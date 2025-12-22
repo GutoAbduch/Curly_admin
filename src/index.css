@@ -1,0 +1,45 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-[#050505] text-[#F3E5AB] font-sans antialiased; /* Fundo Preto Profundo / Texto Creme Dourado */
+}
+
+/* --- Identidade Visual CURLY --- */
+
+/* Cores Personalizadas */
+.text-gold { color: #D4AF37; }
+.text-gold-light { color: #F3E5AB; } /* Para textos longos (legibilidade) */
+.bg-gold { background-color: #D4AF37; }
+.bg-gold-dark { background-color: #AA8C2C; }
+.border-gold { border-color: #D4AF37; }
+
+/* Fontes */
+.font-egyptian { 
+  font-family: 'Cinzel', serif; 
+  letter-spacing: 0.1em;
+}
+
+/* Classes Utilitárias Reutilizáveis */
+.btn-primary {
+  @apply w-full bg-gold text-black font-black py-3 rounded-lg hover:bg-white transition-all duration-300 shadow-[0_0_15px_rgba(212,175,55,0.3)] disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider;
+}
+
+.input-field {
+  @apply w-full p-3 border border-[#333] rounded-lg focus:ring-1 focus:ring-[#D4AF37] focus:border-[#D4AF37] outline-none transition text-sm bg-[#111] text-[#F3E5AB] placeholder-gray-600;
+}
+
+/* Scrollbar Personalizada */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: #111; }
+::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #D4AF37; }
+
+/* Animações */
+.fade-in { animation: fadeIn 0.5s ease-out; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+@media print { .no-print { display: none !important; } }
