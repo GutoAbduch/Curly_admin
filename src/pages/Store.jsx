@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../config/firebase';
+import { db, storage } from '../config/firebase'; // Adicionado storage
 import { doc, getDoc, setDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'; // Funções de Upload
 import { useOutletContext } from 'react-router-dom';
 
 export default function Store() {
   const { role, shopId } = useOutletContext();
-  const APP_ID = shopId;
   
   // Controle de Abas
-  const [activeTab, setActiveTab] = useState('visual'); // 'visual', 'infos', 'hours', 'danger'
+  const [activeTab, setActiveTab] = useState('visual'); 
   
   // Estados de Dados
   const [schedule, setSchedule] = useState(Array(7).fill({ open: '09:00', close: '18:00', closed: false }));
@@ -19,7 +19,9 @@ export default function Store() {
     logoUrl: '', bannerUrl: '', primaryColor: '#D4AF37', secondaryColor: '#000000', slogan: '' 
   });
   const [emergencyDate, setEmergencyDate] = useState('');
+  
   const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false); // Estado para loading do upload
 
   // Segurança
   if (!['Admin', 'Gerente'].includes(role)) return (
@@ -30,16 +32,14 @@ export default function Store() {
   );
 
   useEffect(() => {
-    if(!APP_ID) return;
+    if(!shopId) return;
     const loadData = async () => {
         setLoading(true);
         try {
-            // 1. Horários
-            const sSnap = await getDoc(doc(db, `artifacts/${APP_ID}/public/data/store_settings`, 'hours')); 
+            const sSnap = await getDoc(doc(db, `artifacts/${shopId}/public/data/store_settings`, 'hours')); 
             if(sSnap.exists()) setSchedule(sSnap.data().schedule);
 
-            // 2. Informações Gerais & Branding
-            const iSnap = await getDoc(doc(db, `artifacts/${APP_ID}/public/data/store_settings`, 'info'));
+            const iSnap = await getDoc(doc(db, `artifacts/${shopId}/public/data/store_settings`, 'info'));
             if(iSnap.exists()) {
                 const data = iSnap.data();
                 setInfo({ ...info, ...data.contact });
@@ -48,33 +48,62 @@ export default function Store() {
         } catch (err) { console.error(err); } finally { setLoading(false); }
     };
     loadData();
-  }, [APP_ID]);
+  }, [shopId]);
 
-  // Salvar Horários
+  // Função Genérica de Upload
+  const handleImageUpload = async (e, type) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      // Validações básicas
+      if (!file.type.startsWith('image/')) return alert("Por favor, envie apenas arquivos de imagem (PNG, JPG).");
+      if (file.size > 2 * 1024 * 1024) return alert("A imagem deve ter no máximo 2MB.");
+
+      setUploading(true);
+      try {
+          // Cria uma referência única: loja/tipo_timestamp
+          const fileRef = ref(storage, `logos/${shopId}/${type}_${Date.now()}`);
+          
+          // Sobe o arquivo
+          await uploadBytes(fileRef, file);
+          
+          // Pega a URL pública
+          const url = await getDownloadURL(fileRef);
+          
+          // Atualiza o estado local
+          setBranding(prev => ({ ...prev, [type]: url }));
+          alert("Imagem carregada! Não esqueça de clicar em 'Salvar Aparência' para confirmar.");
+      } catch (err) {
+          console.error(err);
+          alert("Erro no upload: " + err.message);
+      } finally {
+          setUploading(false);
+      }
+  };
+
   const saveSchedule = async (e) => { 
       e.preventDefault(); 
-      await setDoc(doc(db, `artifacts/${APP_ID}/public/data/store_settings`, 'hours'), { schedule }); 
+      await setDoc(doc(db, `artifacts/${shopId}/public/data/store_settings`, 'hours'), { schedule }); 
       alert("Horários atualizados!"); 
   };
   
-  // Salvar Infos e Branding
   const saveSettings = async (e) => {
       e.preventDefault();
-      await setDoc(doc(db, `artifacts/${APP_ID}/public/data/store_settings`, 'info'), { 
+      await setDoc(doc(db, `artifacts/${shopId}/public/data/store_settings`, 'info'), { 
           contact: info, 
           branding: branding 
       });
-      alert("Configurações do Site atualizadas!");
+      alert("Configurações atualizadas!");
   };
 
   const updSchedule = (i, f, v) => { const n = [...schedule]; n[i] = { ...n[i], [f]: v }; setSchedule(n); };
   
   const handleEmergency = async () => {
-      const q = query(collection(db, `artifacts/${APP_ID}/public/data/appointments`), where('dateString', '==', emergencyDate));
+      const q = query(collection(db, `artifacts/${shopId}/public/data/appointments`), where('dateString', '==', emergencyDate));
       const s = await getDocs(q); const emails = new Set(); 
       s.forEach(d => { if(d.data().clientEmail) emails.add(d.data().clientEmail); });
       if(emails.size === 0) return alert("Sem e-mails para esta data.");
-      window.open(`mailto:?bcc=${Array.from(emails).join(',')}&subject=Aviso Importante - ${shopId}&body=Prezados clientes,\n\nInformamos que não haverá atendimento no dia ${emergencyDate.split('-').reverse().join('/')}.\n\nAtenciosamente,\nEquipe.`);
+      window.open(`mailto:?bcc=${Array.from(emails).join(',')}&subject=Aviso Importante&body=Prezados clientes...`);
   };
 
   if(loading) return <div className="text-center text-[#666] py-10">Carregando configurações...</div>;
@@ -109,20 +138,42 @@ export default function Store() {
       {/* CONTEÚDO DAS ABAS */}
       <div className="bg-[#0a0a0a] p-6 rounded-2xl shadow-sm border border-[#222]">
         
-        {/* ABA 1: VISUAL (BRANDING) */}
+        {/* ABA 1: VISUAL (BRANDING) COM UPLOAD */}
         {activeTab === 'visual' && (
             <form onSubmit={saveSettings} className="space-y-6 animate-fade-in">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-4">
+                    <div className="space-y-6">
                         <h3 className="text-sm font-bold text-[#eee] uppercase border-b border-[#222] pb-2">Identidade Visual</h3>
+                        
+                        {/* UPLOAD LOGO */}
                         <div>
-                            <label className="text-[10px] font-bold text-[#666] uppercase block mb-1">URL do Logo (Transparente)</label>
-                            <input className="input-field" value={branding.logoUrl} onChange={e => setBranding({...branding, logoUrl: e.target.value})} placeholder="https://..." />
+                            <label className="text-[10px] font-bold text-[#666] uppercase block mb-2">Logo da Barbearia (PNG Transparente)</label>
+                            <div className="flex items-center gap-4">
+                                <div className="w-20 h-20 bg-[#111] border border-[#333] rounded-lg flex items-center justify-center overflow-hidden">
+                                    {branding.logoUrl ? <img src={branding.logoUrl} alt="Logo" className="w-full h-full object-contain" /> : <i className="fas fa-image text-[#333] text-2xl"></i>}
+                                </div>
+                                <div className="flex-1">
+                                    <label className={`cursor-pointer btn-primary py-2 px-4 text-xs inline-block w-auto ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                        {uploading ? 'Enviando...' : 'Carregar Nova Logo'}
+                                        <input type="file" onChange={(e) => handleImageUpload(e, 'logoUrl')} className="hidden" accept="image/*" disabled={uploading} />
+                                    </label>
+                                    <p className="text-[9px] text-[#444] mt-1">Recomendado: 500x500px, máx 2MB.</p>
+                                </div>
+                            </div>
                         </div>
+
+                        {/* UPLOAD BANNER */}
                         <div>
-                            <label className="text-[10px] font-bold text-[#666] uppercase block mb-1">URL do Banner (Capa do Site)</label>
-                            <input className="input-field" value={branding.bannerUrl} onChange={e => setBranding({...branding, bannerUrl: e.target.value})} placeholder="https://..." />
+                            <label className="text-[10px] font-bold text-[#666] uppercase block mb-2">Banner / Capa do Site</label>
+                            <div className="w-full h-32 bg-[#111] border border-[#333] rounded-lg flex items-center justify-center overflow-hidden relative mb-2">
+                                {branding.bannerUrl ? <img src={branding.bannerUrl} alt="Banner" className="w-full h-full object-cover" /> : <i className="fas fa-image text-[#333] text-3xl"></i>}
+                            </div>
+                            <label className={`cursor-pointer border border-[#333] text-[#888] hover:text-[#eee] hover:border-[#666] py-2 px-4 rounded text-xs font-bold inline-block transition ${uploading ? 'opacity-50' : ''}`}>
+                                <i className="fas fa-upload mr-1"></i> {uploading ? 'Enviando...' : 'Alterar Capa'}
+                                <input type="file" onChange={(e) => handleImageUpload(e, 'bannerUrl')} className="hidden" accept="image/*" disabled={uploading} />
+                            </label>
                         </div>
+
                         <div>
                             <label className="text-[10px] font-bold text-[#666] uppercase block mb-1">Slogan / Frase de Efeito</label>
                             <input className="input-field" value={branding.slogan} onChange={e => setBranding({...branding, slogan: e.target.value})} placeholder="Ex: Estilo e tradição..." />
@@ -156,7 +207,7 @@ export default function Store() {
                     </div>
                 </div>
                 <div className="flex justify-end pt-4 border-t border-[#222]">
-                    <button className="btn-primary w-auto px-8">Salvar Aparência</button>
+                    <button className="btn-primary w-auto px-8" disabled={uploading}>{uploading ? 'Aguarde...' : 'Salvar Aparência'}</button>
                 </div>
             </form>
         )}
@@ -222,13 +273,13 @@ export default function Store() {
             <div className="animate-fade-in space-y-6">
                 <div className="bg-red-900/10 border border-red-900/30 rounded-2xl p-6">
                     <h3 className="text-lg font-bold text-red-500 mb-2 flex items-center gap-2"><i className="fas fa-bullhorn"></i> COMUNICADO URGENTE</h3>
-                    <p className="text-sm text-red-300/80 mb-4">Utilize esta ferramenta para notificar todos os clientes de um dia específico sobre imprevistos (falta de luz, luto, manutenção).</p>
+                    <p className="text-sm text-red-300/80 mb-4">Utilize esta ferramenta para notificar todos os clientes de um dia específico sobre imprevistos.</p>
                     <div className="flex items-end gap-4">
                         <div className="flex-1">
                             <label className="block text-xs font-bold text-red-400 uppercase mb-1">Data Afetada</label>
                             <input type="date" value={emergencyDate} onChange={e => setEmergencyDate(e.target.value)} className="w-full border border-red-900/50 rounded-lg p-3 bg-[#000] text-red-200 outline-none" />
                         </div>
-                        <button onClick={handleEmergency} className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition">GERAR E-MAIL EM MASSA</button>
+                        <button onClick={handleEmergency} className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition">GERAR E-MAIL</button>
                     </div>
                 </div>
             </div>
