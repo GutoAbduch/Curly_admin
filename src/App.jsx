@@ -8,14 +8,15 @@ import Store from './pages/Store';
 import Finance from './pages/Finance';
 import Users from './pages/Users';
 import Appointments from './pages/Appointments';
-import SuperAdmin from './pages/SuperAdmin'; // <--- Import Novo
+import SuperAdmin from './pages/SuperAdmin'; 
 import AdminLayout from './layouts/AdminLayout';
 
 function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<Navigate to="/renovosbbs/login" />} />
+        {/* AJUSTE AQUI: Redireciona para a sua loja Mestra (abduch) */}
+        <Route path="/" element={<Navigate to="/abduch/login" />} />
         
         <Route path="/:shopId/login" element={<Login />} />
         
@@ -27,7 +28,7 @@ function App() {
           <Route path="appointments" element={<Appointments />} />
           <Route path="store" element={<Store />} />
           
-          {/* NOVA ROTA MASTER */}
+          {/* Rota da Holding */}
           <Route path="superadmin" element={<SuperAdmin />} />
           
           <Route index element={<Navigate to="services" />} />
