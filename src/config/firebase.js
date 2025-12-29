@@ -1,19 +1,21 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
-import { getStorage } from "firebase/storage"; // <--- NOVO
+import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCvH-bZXnON0RaiBjC6vbx4Jd23GQtyPlg",
-  authDomain: "renovos-admin-78f46.firebaseapp.com",
-  projectId: "renovos-admin-78f46",
-  storageBucket: "renovos-admin-78f46.firebasestorage.app", // Verifique se isso está correto no seu console
-  messagingSenderId: "411846036128",
-  appId: "1:411846036128:web:8e20bae55e56ddde1c17c5"
+  apiKey: import.meta.env.VITE_API_KEY,
+  authDomain: import.meta.env.VITE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_APP_ID
 };
 
 const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-export const storage = getStorage(app); // <--- NOVO: Exportamos o storage para usar nas páginas
+export const storage = getStorage(app);
+// Exportamos o e-mail master para usar no Login sem deixá-lo hardcoded lá
+export const MASTER_EMAIL = import.meta.env.VITE_MASTER_EMAIL;

@@ -1,15 +1,12 @@
 import React, { useState } from 'react';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, signOut } from 'firebase/auth';
-import { auth, db } from '../config/firebase';
+import { auth, db, MASTER_EMAIL } from '../config/firebase';
 import { useNavigate, useParams } from 'react-router-dom';
 import { doc, setDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 
 export default function Login() {
   const navigate = useNavigate();
   const params = useParams();
-  
-  // SEU E-MAIL MESTRE
-  const MASTER_EMAIL = 'gutoabduch@gmail.com';
   
   // ID da loja (fallback para renovosbbs apenas para testes locais)
   const shopId = params.shopId || 'renovosbbs';
@@ -72,29 +69,62 @@ export default function Login() {
     }
 
     try {
-        // 1. Cria autenticação no Firebase Auth
-        const cred = await createUserWithEmailAndPassword(auth, userForm.email, userForm.password);
-        await updateProfile(cred.user, { displayName: userForm.name });
+        let userCredential;
+        let isNewUser = true;
 
-        // 2. Salva no Firestore da loja atual
+        try {
+            // Tenta criar um usuário novo
+            userCredential = await createUserWithEmailAndPassword(auth, userForm.email, userForm.password);
+            // Se conseguir, atualiza o nome
+            await updateProfile(userCredential.user, { displayName: userForm.name });
+        } catch (createError) {
+            // Se o erro for "email já existe", tentamos logar para vincular à nova loja
+            if (createError.code === 'auth/email-already-in-use') {
+                try {
+                    // Tenta logar com a senha fornecida no cadastro
+                    userCredential = await signInWithEmailAndPassword(auth, userForm.email, userForm.password);
+                    isNewUser = false; // Usuário já existia
+                } catch (loginError) {
+                    throw new Error("Este e-mail já possui uma conta, mas a senha informada não confere.");
+                }
+            } else {
+                throw createError; // Se for outro erro, repassa
+            }
+        }
+
+        const user = userCredential.user;
+
+        // 2. Salva ou Atualiza o vínculo no Firestore da loja atual
         // Regra de Negócio: Conta nasce "Sem Cargo" (role: 'pending')
-        await setDoc(doc(db, `artifacts/${shopId}/public/data/users/${cred.user.uid}`), {
+        await setDoc(doc(db, `artifacts/${shopId}/public/data/users/${user.uid}`), {
             name: userForm.name,
             email: userForm.email,
             cpf: userForm.cpf,
             birthDate: userForm.birthDate,
             phone: userForm.phone,
-            role: 'pending', // <--- IMPORTANTE: Usuário nasce bloqueado
-            createdAt: serverTimestamp()
+            role: 'pending', // <--- IMPORTANTE: Usuário nasce bloqueado nesta loja
+            createdAt: serverTimestamp(), // Data de entrada nesta loja
+            linkedAt: isNewUser ? serverTimestamp() : serverTimestamp() // Apenas registro de log
         });
 
+        // Se era usuário novo ou login forçado, fazemos logout para ele logar corretamente
         await signOut(auth);
-        alert("Cadastro realizado! Solicite ao gerente a liberação do seu acesso.");
+        
+        if (isNewUser) {
+            alert("Cadastro realizado! Solicite ao gerente a liberação do seu acesso.");
+        } else {
+            alert("Sua conta existente foi vinculada a esta Barbearia! Solicite a liberação ao gerente.");
+        }
+        
         setMode('login');
         setUserForm({ name: '', email: '', cpf: '', birthDate: '', phone: '', password: '', confirmPassword: '' });
 
     } catch (err) {
-        setError(translateFirebaseError(err.code));
+        // Se a mensagem de erro vier do nosso throw manual, usamos ela. Se não, traduzimos.
+        setError(err.message === "Este e-mail já possui uma conta, mas a senha informada não confere." 
+            ? err.message 
+            : translateFirebaseError(err.code)
+        );
     } finally {
         setLoading(false);
     }
