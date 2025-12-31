@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, storage } from '../config/firebase'; 
 import { 
-  collection, addDoc, onSnapshot, deleteDoc, doc, serverTimestamp 
+  collection, addDoc, onSnapshot, deleteDoc, doc, serverTimestamp, query, where // <--- Importei query e where
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'; 
 import { useOutletContext } from 'react-router-dom';
@@ -45,12 +45,20 @@ export default function Services() {
   useEffect(() => {
     if (!APP_ID) return;
 
+    // 1. Busca Serviços (Mantive igual)
     const unsubServices = onSnapshot(collection(db, `artifacts/${APP_ID}/public/data/services`), (snap) => {
       setServices(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);
     });
 
-    const unsubStock = onSnapshot(collection(db, `artifacts/${APP_ID}/public/data/products`), (snap) => {
+    // 2. Busca Produtos (AQUI ESTÁ A ALTERAÇÃO)
+    // Criei uma query que filtra apenas onde useType == 'internal'
+    const qProducts = query(
+        collection(db, `artifacts/${APP_ID}/public/data/products`),
+        where('useType', '==', 'internal') // <--- FILTRO APLICADO
+    );
+
+    const unsubStock = onSnapshot(qProducts, (snap) => {
         setStockList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
@@ -86,7 +94,7 @@ export default function Services() {
           supplies: [...prev.supplies, {
               productId: product.id,
               name: product.name,
-              unit: product.unit,
+              unit: product.measureUnit || 'UN', // Ajustei para pegar a unidade salva no estoque
               qty: tempSupply.qty
           }]
       }));
@@ -201,7 +209,6 @@ export default function Services() {
                 </div>
               </div>
 
-              {/* CATEGORIA - AJUSTADA AQUI */}
               <div>
                 <label className="text-xs font-bold text-[#666] uppercase">Categoria</label>
                 <select className="input-field" value={form.category} onChange={e => setForm({...form, category: e.target.value})}>
@@ -212,15 +219,20 @@ export default function Services() {
                 </select>
               </div>
 
-              {/* INSUMOS */}
+              {/* INSUMOS (AGORA FILTRADO) */}
               <div className="bg-[#0a0a0a] p-3 rounded-xl border border-[#222]">
-                  <label className="text-[10px] font-bold text-[#666] uppercase mb-2 block">Insumos Gastos (Estimativa)</label>
+                  <label className="text-[10px] font-bold text-[#666] uppercase mb-2 block">Insumos Gastos (Apenas Uso Interno)</label>
                   <div className="flex gap-2 mb-2">
                       <select className="input-field text-xs py-2" value={tempSupply.productId} onChange={e => setTempSupply({...tempSupply, productId: e.target.value})}>
-                          <option value="">Produto...</option>
-                          {stockList.map(p => <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>)}
+                          <option value="">Selecione Insumo...</option>
+                          {/* A Lista stockList agora só contém itens internos */}
+                          {stockList.map(p => (
+                              <option key={p.id} value={p.id}>
+                                  {p.name} ({p.measureValue || ''}{p.measureUnit || 'UN'})
+                              </option>
+                          ))}
                       </select>
-                      <input type="number" className="input-field w-20 text-xs py-2" placeholder="Qtd" value={tempSupply.qty} onChange={e => setTempSupply({...tempSupply, qty: e.target.value})} />
+                      <input type="number" step="0.001" className="input-field w-20 text-xs py-2" placeholder="Qtd" value={tempSupply.qty} onChange={e => setTempSupply({...tempSupply, qty: e.target.value})} />
                       <button type="button" onClick={addSupply} className="bg-[#222] text-gold px-3 rounded hover:bg-[#333]"><i className="fas fa-plus"></i></button>
                   </div>
                   
@@ -244,7 +256,7 @@ export default function Services() {
           </div>
         </div>
 
-        {/* LISTAGEM */}
+        {/* LISTAGEM (MANTIDA IGUAL) */}
         <div className="lg:col-span-2">
           {loading ? (
              <div className="text-center py-20 text-[#666] animate-pulse">Carregando serviços...</div>
