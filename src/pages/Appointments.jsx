@@ -2,9 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../config/firebase';
 import { 
   collection, query, where, onSnapshot, addDoc, doc, updateDoc, getDoc, deleteDoc,
-  serverTimestamp, increment, runTransaction, getDocs
+  serverTimestamp, increment, getDocs, writeBatch, orderBy // Adicionado orderBy
 } from 'firebase/firestore';
-import { useOutletContext, Link } from 'react-router-dom';
+import { useOutletContext } from 'react-router-dom';
 
 // --- UTILS ---
 const getLocalToday = () => {
@@ -67,7 +67,7 @@ export default function Appointments() {
   const [form, setForm] = useState({
     clientName: '', 
     clientPhone: '', 
-    clientEmail: '', // Novo Campo Obrigatório
+    clientEmail: '', 
     serviceId: '', serviceName: '', 
     price: 0, barberId: '', barberName: '', date: getLocalToday(), time: '', duration: 30
   });
@@ -99,7 +99,7 @@ export default function Appointments() {
         setBarbersList(users.filter(u => ['Admin', 'Gerente', 'Barbeiro'].includes(u.role)));
     });
 
-    // 4. Estoque (Busca única)
+    // 4. Estoque (Busca única para preencher o modal de checkout)
     const loadStock = async () => {
         const snap = await getDocs(query(collection(db, `artifacts/${APP_ID}/public/data/products`)));
         setStockList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -159,8 +159,7 @@ export default function Appointments() {
       return { status: 'full', css: 'bg-red-900/20 border-red-600/30', count: 2, apps };
   };
 
-  // --- HANDLERS DE AÇÃO ---
-  
+  // --- HANDLERS ---
   const handleSlotClick = (barber, time) => {
       const { status } = getSlotStatus(barber.id, time);
       if (status === 'full') {
@@ -180,7 +179,6 @@ export default function Appointments() {
       e.preventDefault();
       setSaving(true);
       
-      // VALIDAÇÃO RIGOROSA
       if(!form.clientName || !form.serviceId || !form.clientPhone || !form.clientEmail) {
           alert("Todos os campos são obrigatórios (Nome, Telefone e E-mail)."); 
           setSaving(false); return;
@@ -215,18 +213,20 @@ export default function Appointments() {
       }
   };
 
-  // --- CHECKOUT ---
+  // --- CHECKOUT (LÓGICA CORRIGIDA COM ESTOQUE PEPS) ---
   const initiateFinish = (e, appt) => {
       e.stopPropagation(); 
       setFinishingAppt(appt);
       setPaymentMethod(''); setTip(0); setChangeFor(''); setConsumedSupplies([]);
       
+      // Pré-carrega insumos vinculados ao serviço
       const service = servicesList.find(s => s.id === appt.serviceId);
       if (service && service.linkedProducts) {
           const autoSupplies = [];
           service.linkedProducts.forEach(pid => {
               const prod = stockList.find(p => p.id === pid);
-              if(prod) autoSupplies.push({ productId: prod.id, name: prod.name, unit: prod.measureUnit, qty: '' });
+              // Traz o produto com qtd vazia para o usuário confirmar
+              if(prod) autoSupplies.push({ productId: prod.id, name: prod.name, unit: prod.measureUnit, qty: '', currentStock: prod.currentStock });
           });
           setConsumedSupplies(autoSupplies);
       }
@@ -234,41 +234,86 @@ export default function Appointments() {
   };
 
   const confirmFinish = async () => {
-      if(!finishingAppt || !paymentMethod) { alert("Selecione pagto."); return; }
+      if(!finishingAppt || !paymentMethod) { alert("Selecione a forma de pagamento."); return; }
       
+      setSaving(true); // Bloqueia botão para evitar clique duplo
       try {
-        await runTransaction(db, async (transaction) => {
-            const finalTotal = parseFloat(finishingAppt.price) + parseFloat(tip || 0);
+        const batch = writeBatch(db);
+        const finalTotal = parseFloat(finishingAppt.price) + parseFloat(tip || 0);
 
-            const apptRef = doc(db, `artifacts/${APP_ID}/public/data/appointments`, finishingAppt.id);
-            transaction.update(apptRef, {
-                status: 'completed', paymentMethod, paidAmount: finalTotal, tip: parseFloat(tip || 0),
-                finishedAt: serverTimestamp(), suppliesCost: consumedSupplies
-            });
-
-            const financeRef = doc(collection(db, `artifacts/${APP_ID}/public/data/financial`));
-            transaction.set(financeRef, {
-                type: 'income', category: 'Serviço', description: `Corte: ${finishingAppt.clientName}`,
-                amount: finalTotal, date: selectedDate, barberId: finishingAppt.barberId,
-                paymentMethod, createdAt: serverTimestamp()
-            });
-
-            consumedSupplies.forEach(item => {
-                if(item.productId && item.qty > 0) {
-                    const productRef = doc(db, `artifacts/${APP_ID}/public/data/products`, item.productId);
-                    transaction.update(productRef, { currentStock: increment(-parseFloat(item.qty)) });
-                    
-                    const moveRef = doc(collection(db, `artifacts/${APP_ID}/public/data/movements`));
-                    transaction.set(moveRef, {
-                        productId: item.productId, productName: item.name, type: 'OUT', reason: 'internal',
-                        quantity: parseFloat(item.qty), date: serverTimestamp(), user: 'Sistema (Baixa Serviço)'
-                    });
-                }
-            });
+        // 1. Atualizar Agendamento
+        const apptRef = doc(db, `artifacts/${APP_ID}/public/data/appointments`, finishingAppt.id);
+        batch.update(apptRef, {
+            status: 'completed', paymentMethod, paidAmount: finalTotal, tip: parseFloat(tip || 0),
+            finishedAt: serverTimestamp(), suppliesCost: consumedSupplies // Salva o que foi gasto no histórico
         });
-        setShowFinishModal(false); alert('Serviço finalizado!');
+
+        // 2. Criar Registro Financeiro (Entrada)
+        const financeRef = doc(collection(db, `artifacts/${APP_ID}/public/data/financial`));
+        batch.set(financeRef, {
+            type: 'income', category: 'Serviço', description: `Corte: ${finishingAppt.clientName}`,
+            amount: finalTotal, date: selectedDate, barberId: finishingAppt.barberId,
+            paymentMethod, createdAt: serverTimestamp(), user: 'Sistema'
+        });
+
+        // 3. BAIXA DE ESTOQUE INTELIGENTE (PEPS)
+        // Precisamos iterar sobre cada insumo e fazer a baixa nos lotes
+        for (const item of consumedSupplies) {
+            const qty = parseFloat(item.qty);
+            if (item.productId && qty > 0) {
+                
+                // Busca Lotes Ativos
+                const batchesRef = collection(db, `artifacts/${APP_ID}/public/data/products/${item.productId}/batches`);
+                const qBatches = query(batchesRef, where('isActive', '==', true), orderBy('entryDate', 'asc'));
+                const snapshot = await getDocs(qBatches);
+
+                let remaining = qty;
+                let costOfGoodsSold = 0; // Para o relatório de Lucro
+
+                snapshot.docs.forEach((docSnap) => {
+                    if (remaining <= 0) return;
+                    
+                    const batchData = docSnap.data();
+                    const take = Math.min(batchData.currentQuantity, remaining);
+                    const newQtd = Number((batchData.currentQuantity - take).toFixed(3));
+                    
+                    // Atualiza Lote
+                    const updateData = { currentQuantity: newQtd };
+                    if (newQtd <= 0) updateData.isActive = false;
+                    batch.update(docSnap.ref, updateData);
+                    
+                    remaining = Number((remaining - take).toFixed(3));
+                    costOfGoodsSold += (take * batchData.unitCost);
+                });
+
+                // Atualiza Produto Principal
+                const productRef = doc(db, `artifacts/${APP_ID}/public/data/products`, item.productId);
+                // Como não temos o valor atualizado em tempo real aqui dentro do loop (sem ler de novo), 
+                // usamos o incremento negativo que é seguro
+                batch.update(productRef, { currentStock: increment(-qty) });
+
+                // Cria Movimento de Saída (Para Relatório de Estoque)
+                const moveRef = doc(collection(db, `artifacts/${APP_ID}/public/data/movements`));
+                batch.set(moveRef, {
+                    productId: item.productId, 
+                    productName: item.name, 
+                    type: 'OUT', 
+                    reason: 'internal', // Serviço é uso interno
+                    quantity: qty, 
+                    date: serverTimestamp(), 
+                    user: 'Sistema (Baixa Serviço)',
+                    costValue: costOfGoodsSold, // CRUCIAL para o Lucro Real
+                    saleValue: 0 // Uso interno não tem valor de venda direta
+                });
+            }
+        }
+
+        await batch.commit();
+        setShowFinishModal(false); alert('Serviço finalizado e estoque atualizado!');
       } catch (err) {
           console.error(err); alert('Erro no checkout: ' + err.message);
+      } finally {
+          setSaving(false);
       }
   };
 
@@ -288,7 +333,7 @@ export default function Appointments() {
                           <span className="text-[10px] opacity-70 truncate block">{app.serviceName}</span>
                       </div>
                       
-                      {/* BOTÕES MAIORES E DESTACADOS */}
+                      {/* BOTÕES */}
                       {app.status === 'scheduled' && (
                           <div className="flex items-center gap-2 absolute right-2 bg-black/50 p-1 rounded-lg backdrop-blur-sm">
                               <button 
@@ -380,7 +425,7 @@ export default function Appointments() {
           )}
       </div>
 
-      {/* MODAL ADD (COM CAMPOS OBRIGATÓRIOS) */}
+      {/* MODAL ADD */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
             <div className="bg-[#0a0a0a] w-full max-w-sm rounded-2xl border border-[#333] shadow-2xl p-6">
@@ -426,7 +471,7 @@ export default function Appointments() {
         </div>
       )}
 
-      {/* MODAL CHECKOUT (IGUAL) */}
+      {/* MODAL CHECKOUT */}
       {showFinishModal && finishingAppt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
               <div className="bg-[#111] w-full max-w-md rounded-2xl border border-[#333] shadow-2xl p-6 overflow-y-auto max-h-[90vh]">
@@ -460,21 +505,28 @@ export default function Appointments() {
                           <input type="number" className="input-field mt-1" placeholder="R$ 0,00" value={tip || ''} onChange={e => setTip(e.target.value)} />
                       </div>
 
-                      {/* Consumo */}
+                      {/* Consumo de Estoque */}
                       <div className="bg-[#0a0a0a] p-3 rounded border border-[#222]">
-                          <p className="text-xs font-bold text-gray-500 uppercase mb-2">Insumos (Baixa Estoque)</p>
+                          <p className="text-xs font-bold text-gray-500 uppercase mb-2">Baixa de Insumos (Interno)</p>
                           {consumedSupplies.map((item, idx) => (
-                              <div key={idx} className="flex justify-between items-center text-xs mb-1">
-                                  <span className="text-gray-300">{item.name}</span>
+                              <div key={idx} className="flex justify-between items-center text-xs mb-2 pb-2 border-b border-[#1a1a1a]">
+                                  <div>
+                                      <span className="text-gray-300 block">{item.name}</span>
+                                      <span className="text-[9px] text-gray-600">Estoque: {item.currentStock} {item.unit}</span>
+                                  </div>
                                   <div className="flex items-center gap-1">
-                                      <input type="number" className="w-12 bg-black border border-[#333] text-center" value={item.qty} onChange={(e) => {
+                                      <input type="number" step="0.001" className="w-16 bg-black border border-[#333] text-center p-1 rounded text-white" 
+                                        value={item.qty} 
+                                        onChange={(e) => {
                                           const newArr = [...consumedSupplies]; newArr[idx].qty = e.target.value; setConsumedSupplies(newArr);
-                                      }} placeholder="Qtd" />
-                                      <span className="text-[9px] text-gray-600">{item.unit}</span>
+                                        }} 
+                                        placeholder="Qtd usada" 
+                                      />
+                                      <span className="text-[9px] text-gray-500">{item.unit}</span>
                                   </div>
                               </div>
                           ))}
-                          {consumedSupplies.length === 0 && <p className="text-[10px] text-gray-700">Nenhum insumo vinculado.</p>}
+                          {consumedSupplies.length === 0 && <p className="text-[10px] text-gray-700 italic">Nenhum produto vinculado a este serviço.</p>}
                       </div>
                       
                       <div className="bg-[#1a1a1a] p-4 rounded text-center border border-[#333]">
@@ -484,7 +536,7 @@ export default function Appointments() {
 
                       <div className="flex gap-2">
                           <button onClick={() => setShowFinishModal(false)} className="flex-1 py-3 text-gray-500 font-bold hover:text-white">VOLTAR</button>
-                          <button onClick={confirmFinish} className="flex-1 btn-primary">FINALIZAR</button>
+                          <button onClick={confirmFinish} disabled={saving} className="flex-1 btn-primary">{saving ? 'PROCESSANDO...' : 'FINALIZAR'}</button>
                       </div>
                   </div>
               </div>
