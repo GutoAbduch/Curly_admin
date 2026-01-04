@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, storage } from '../config/firebase'; 
 import { 
-  collection, addDoc, onSnapshot, deleteDoc, doc, serverTimestamp, query, where // <--- Importei query e where
+  collection, addDoc, onSnapshot, deleteDoc, doc, serverTimestamp, query, where, updateDoc
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'; 
 import { useOutletContext } from 'react-router-dom';
@@ -45,17 +45,16 @@ export default function Services() {
   useEffect(() => {
     if (!APP_ID) return;
 
-    // 1. Busca Serviços (Mantive igual)
+    // 1. Busca Serviços
     const unsubServices = onSnapshot(collection(db, `artifacts/${APP_ID}/public/data/services`), (snap) => {
       setServices(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);
     });
 
-    // 2. Busca Produtos (AQUI ESTÁ A ALTERAÇÃO)
-    // Criei uma query que filtra apenas onde useType == 'internal'
+    // 2. Busca Produtos (Apenas Uso Interno ou Ambos para vincular como insumo)
     const qProducts = query(
         collection(db, `artifacts/${APP_ID}/public/data/products`),
-        where('useType', '==', 'internal') // <--- FILTRO APLICADO
+        where('useType', '!=', 'resale') // Traz 'internal' e outros que não sejam puramente revenda
     );
 
     const unsubStock = onSnapshot(qProducts, (snap) => {
@@ -94,7 +93,7 @@ export default function Services() {
           supplies: [...prev.supplies, {
               productId: product.id,
               name: product.name,
-              unit: product.measureUnit || 'UN', // Ajustei para pegar a unidade salva no estoque
+              unit: product.measureUnit || 'UN',
               qty: tempSupply.qty
           }]
       }));
@@ -121,6 +120,7 @@ export default function Services() {
           finalImageUrl = await getDownloadURL(uploadResult.ref);
       }
 
+      // Garante que números sejam salvos como números
       await addDoc(collection(db, `artifacts/${APP_ID}/public/data/services`), {
         ...form,
         imageUrl: finalImageUrl,
@@ -178,34 +178,39 @@ export default function Services() {
                             type="file" 
                             accept="image/png, image/jpeg, image/jpg" 
                             onChange={handleFileChange}
-                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" 
                         />
-                        <i className="fas fa-camera text-2xl text-[#444] group-hover:text-gold mb-2"></i>
-                        <p className="text-xs text-[#666] group-hover:text-[#eee]">Clique para adicionar foto</p>
+                        <i className="fas fa-camera text-2xl text-[#444] group-hover:text-gold mb-2 transition-colors"></i>
+                        <p className="text-xs text-[#666] group-hover:text-white transition-colors">Clique para enviar foto</p>
                     </div>
                 ) : (
                     <div className="relative rounded-lg overflow-hidden border border-[#333] group">
-                        <img src={imagePreview} alt="Preview" className="w-full h-40 object-cover opacity-80 group-hover:opacity-100 transition" />
-                        <button type="button" onClick={removeImage} className="absolute top-2 right-2 bg-red-600 text-white w-8 h-8 rounded-full shadow-lg flex items-center justify-center hover:bg-red-700 transition">
-                            <i className="fas fa-trash text-xs"></i>
+                        <img src={imagePreview} alt="Preview" className="w-full h-40 object-cover" />
+                        <button 
+                            type="button" 
+                            onClick={removeImage}
+                            className="absolute top-2 right-2 bg-red-600 text-white w-6 h-6 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                            <i className="fas fa-times text-xs"></i>
                         </button>
                     </div>
                 )}
               </div>
 
+              {/* CAMPOS BÁSICOS */}
               <div>
                 <label className="text-xs font-bold text-[#666] uppercase">Nome do Serviço</label>
-                <input required className="input-field" placeholder="Ex: Corte Degradê" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
+                <input required className="input-field" placeholder="Ex: Corte Degrade" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                    <label className="text-xs font-bold text-[#666] uppercase">Preço (R$)</label>
-                    <input required type="number" step="0.01" className="input-field" placeholder="0.00" value={form.price} onChange={e => setForm({...form, price: e.target.value})} />
+                   <label className="text-xs font-bold text-[#666] uppercase">Preço (R$)</label>
+                   <input required type="number" step="0.01" className="input-field" placeholder="0.00" value={form.price} onChange={e => setForm({...form, price: e.target.value})} />
                 </div>
                 <div>
-                    <label className="text-xs font-bold text-[#666] uppercase">Duração (min)</label>
-                    <input required type="number" className="input-field" placeholder="30" value={form.duration} onChange={e => setForm({...form, duration: e.target.value})} />
+                   <label className="text-xs font-bold text-[#666] uppercase">Duração (min)</label>
+                   <input required type="number" className="input-field" placeholder="30" value={form.duration} onChange={e => setForm({...form, duration: e.target.value})} />
                 </div>
               </div>
 
@@ -219,100 +224,90 @@ export default function Services() {
                 </select>
               </div>
 
-              {/* INSUMOS (AGORA FILTRADO) */}
+              {/* INSUMOS (COM 3 CASAS DECIMAIS) */}
               <div className="bg-[#0a0a0a] p-3 rounded-xl border border-[#222]">
-                  <label className="text-[10px] font-bold text-[#666] uppercase mb-2 block">Insumos Gastos (Apenas Uso Interno)</label>
+                  <label className="text-[10px] font-bold text-[#666] uppercase mb-2 block">Insumos Gastos (Ficha Técnica)</label>
+                  
                   <div className="flex gap-2 mb-2">
                       <select className="input-field text-xs py-2" value={tempSupply.productId} onChange={e => setTempSupply({...tempSupply, productId: e.target.value})}>
                           <option value="">Selecione Insumo...</option>
-                          {/* A Lista stockList agora só contém itens internos */}
                           {stockList.map(p => (
                               <option key={p.id} value={p.id}>
                                   {p.name} ({p.measureValue || ''}{p.measureUnit || 'UN'})
                               </option>
                           ))}
                       </select>
-                      <input type="number" step="0.001" className="input-field w-20 text-xs py-2" placeholder="Qtd" value={tempSupply.qty} onChange={e => setTempSupply({...tempSupply, qty: e.target.value})} />
-                      <button type="button" onClick={addSupply} className="bg-[#222] text-gold px-3 rounded hover:bg-[#333]"><i className="fas fa-plus"></i></button>
+                      <input 
+                        type="number" 
+                        step="0.001" // Permite 3 casas decimais
+                        className="input-field w-20 text-xs py-2" 
+                        placeholder="Qtd" 
+                        value={tempSupply.qty} 
+                        onChange={e => setTempSupply({...tempSupply, qty: e.target.value})}
+                      />
+                      <button type="button" onClick={addSupply} className="bg-[#222] text-gold w-8 rounded border border-[#333] hover:bg-[#333]"><i className="fas fa-plus"></i></button>
                   </div>
-                  
-                  <div className="space-y-1">
-                      {form.supplies.map((sup, idx) => (
-                          <div key={idx} className="flex justify-between items-center text-xs bg-[#111] p-2 rounded border border-[#222]">
-                              <span className="text-[#ccc]">{sup.name}</span>
-                              <div className="flex items-center gap-2">
-                                  <span className="font-bold text-gold">{sup.qty} {sup.unit}</span>
-                                  <button type="button" onClick={() => removeSupply(idx)} className="text-red-500"><i className="fas fa-times"></i></button>
+
+                  {form.supplies.length > 0 && (
+                      <div className="space-y-1 mt-2">
+                          {form.supplies.map((item, idx) => (
+                              <div key={idx} className="flex justify-between items-center text-xs bg-[#111] p-2 rounded border border-[#222]">
+                                  <span className="text-gray-300">{item.name}</span>
+                                  <div className="flex items-center gap-2">
+                                      <span className="text-gold font-mono">{item.qty} {item.unit}</span>
+                                      <button type="button" onClick={() => removeSupply(idx)} className="text-red-500 hover:text-red-400"><i className="fas fa-times"></i></button>
+                                  </div>
                               </div>
-                          </div>
-                      ))}
-                  </div>
+                          ))}
+                      </div>
+                  )}
               </div>
 
-              <button disabled={submitting} className="btn-primary">
-                {submitting ? 'SALVANDO...' : 'CRIAR SERVIÇO'}
+              <button disabled={submitting} className="btn-primary w-full py-4 mt-4 text-sm uppercase tracking-widest">
+                {submitting ? 'Salvando...' : 'Cadastrar Serviço'}
               </button>
             </form>
           </div>
         </div>
 
-        {/* LISTAGEM (MANTIDA IGUAL) */}
+        {/* LISTA DE SERVIÇOS (GRID) */}
         <div className="lg:col-span-2">
-          {loading ? (
-             <div className="text-center py-20 text-[#666] animate-pulse">Carregando serviços...</div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {services.map(s => (
-              <div key={s.id} className="bg-[#111] rounded-2xl overflow-hidden border border-[#333] group hover:border-gold transition-all duration-300">
-                <div className="h-40 bg-[#050505] relative overflow-hidden">
-                    {s.imageUrl ? (
-                        <img src={s.imageUrl} alt={s.name} className="w-full h-full object-cover group-hover:scale-105 transition duration-500" />
-                    ) : (
-                        <div className="w-full h-full flex items-center justify-center text-[#333]">
-                            <i className="fas fa-cut text-4xl"></i>
-                        </div>
-                    )}
-                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition">
-                        <button onClick={() => handleDelete(s.id)} className="bg-red-600/90 text-white w-8 h-8 rounded-full shadow-lg hover:bg-red-500 flex items-center justify-center">
-                            <i className="fas fa-trash text-xs"></i>
-                        </button>
-                    </div>
-                    <div className="absolute bottom-2 left-2 bg-black/70 px-2 py-1 rounded text-[10px] font-bold uppercase text-[#ccc] backdrop-blur-sm">
-                        {s.category}
-                    </div>
-                </div>
-                
-                <div className="p-5">
-                  <h3 className="text-lg font-bold text-[#eee] mb-1">{s.name}</h3>
-                  <div className="flex items-center mb-4">
-                    <i className="far fa-clock text-xs text-gold"></i> <span className="text-xs text-[#888] ml-1">{formatDuration(s.duration)}</span>
-                    <span className="mx-2 text-[#333]">|</span>
-                    <span className="font-black text-gold text-xl">{formatCurrency(s.price)}</span>
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {loading ? <p className="text-[#666]">Carregando...</p> : services.map(service => (
+                  <div key={service.id} className="bg-[#111] rounded-2xl border border-[#222] overflow-hidden group hover:border-[#333] transition-all">
+                      <div className="flex">
+                          <div className="w-24 h-24 bg-[#000] flex-shrink-0 relative">
+                              {service.imageUrl ? (
+                                  <img src={service.imageUrl} className="w-full h-full object-cover" alt={service.name} />
+                              ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-[#333]"><i className="fas fa-cut text-2xl"></i></div>
+                              )}
+                          </div>
+                          <div className="p-4 flex-1 flex flex-col justify-center">
+                              <div className="flex justify-between items-start mb-1">
+                                  <h4 className="font-bold text-white leading-tight">{service.name}</h4>
+                                  <button onClick={() => handleDelete(service.id)} className="text-[#333] hover:text-red-500 transition-colors"><i className="fas fa-trash"></i></button>
+                              </div>
+                              <p className="text-xs text-[#666] mb-2">{service.category} • {formatDuration(service.duration)}</p>
+                              <p className="text-gold font-bold font-mono">{formatCurrency(service.price)}</p>
+                              
+                              {service.supplies && service.supplies.length > 0 && (
+                                  <div className="mt-2 pt-2 border-t border-[#222]">
+                                      <p className="text-[9px] text-[#444] uppercase font-bold mb-1">Insumos:</p>
+                                      <div className="flex flex-wrap gap-1">
+                                          {service.supplies.map((s, i) => (
+                                              <span key={i} className="text-[9px] bg-[#0a0a0a] px-1 rounded text-[#555] border border-[#222]">
+                                                  {s.name}: {s.qty} {s.unit}
+                                              </span>
+                                          ))}
+                                      </div>
+                                  </div>
+                              )}
+                          </div>
+                      </div>
                   </div>
-                  
-                  {s.supplies && s.supplies.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-[#222]">
-                        <p className="text-[9px] font-bold text-[#555] uppercase mb-1">Insumos previstos:</p>
-                        <div className="flex flex-wrap gap-1">
-                            {s.supplies.map((sup, i) => (
-                                <span key={i} className="text-[9px] bg-[#1a1a1a] border border-[#333] px-1.5 py-0.5 rounded text-[#888]">
-                                    {sup.name}
-                                </span>
-                            ))}
-                        </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-            {services.length === 0 && (
-                <div className="col-span-full text-center py-20 text-[#444] border-2 border-dashed border-[#222] rounded-xl">
-                    <i className="fas fa-cut text-4xl mb-4 opacity-20"></i>
-                    <p>Nenhum serviço cadastrado.</p>
-                </div>
-            )}
-            </div>
-          )}
+              ))}
+           </div>
         </div>
       </div>
     </div>
