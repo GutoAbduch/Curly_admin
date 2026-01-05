@@ -1,108 +1,139 @@
 import React from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { 
+  LayoutDashboard, 
+  Calendar, 
+  Users, 
+  Scissors, 
+  Package, 
+  DollarSign, 
+  LogOut, 
+  Globe, 
+  Lock 
+} from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../config/firebase';
+import { canAccess } from '../config/plans'; // Importamos a regra de negócio
 
-export default function Sidebar({ userRole, shopId }) {
-  const navigate = useNavigate();
+export default function Sidebar({ userRole, shopId, storePlan }) {
   const location = useLocation();
+  const navigate = useNavigate();
+
+  const isActive = (path) => {
+    return location.pathname.includes(path) 
+      ? "flex items-center gap-3 p-3 rounded-xl bg-[#D4AF37] text-black font-bold shadow-[0_0_15px_rgba(212,175,55,0.4)] transition-all" 
+      : "flex items-center gap-3 p-3 rounded-xl text-[#888] hover:bg-[#222] hover:text-[#eee] transition-all";
+  };
 
   const handleLogout = async () => {
     await signOut(auth);
     navigate(`/${shopId}/login`);
   };
 
-  const getItemClass = (path) => {
-    const isActive = location.pathname.includes(path);
-    return isActive 
-      ? "flex items-center gap-3 px-4 py-3 rounded-xl bg-[#D4AF37] text-black shadow-[0_0_15px_rgba(212,175,55,0.4)] transition-all duration-300 cursor-pointer mb-2 text-sm font-bold"
-      : "flex items-center gap-3 px-4 py-3 rounded-xl text-[#888] hover:text-[#D4AF37] hover:bg-[#1a1a1a] transition-all duration-300 cursor-pointer mb-2 text-sm font-medium";
-  };
-
-  const navTo = (path) => { navigate(`/${shopId}${path}`); };
-
-  // AJUSTE AQUI: Verifica se é a Loja Mestra (abduch)
-  const isMasterStore = shopId === 'abduch';
+  const isMasterStore = shopId?.toLowerCase() === 'abduch';
 
   return (
-    <aside className="w-64 bg-[#050505] border-r border-[#222] flex flex-col h-screen fixed left-0 top-0 z-40">
-      {/* LOGO */}
-      <div className="p-8 flex items-center justify-center border-b border-[#222]">
-        <h1 className="text-3xl font-black text-[#D4AF37] font-egyptian tracking-widest drop-shadow-[0_0_10px_rgba(212,175,55,0.5)]">
-            CURLY
-        </h1>
+    <aside className="w-64 bg-[#0a0a0a] border-r border-[#222] flex flex-col h-screen fixed left-0 top-0 z-40">
+      
+      {/* LOGO E PLANO */}
+      <div className="p-8 flex flex-col items-center border-b border-[#222]">
+         <div className="w-16 h-16 rounded-full border-2 border-[#D4AF37] flex items-center justify-center mb-3 shadow-[0_0_20px_rgba(212,175,55,0.1)]">
+            <Scissors className="text-[#D4AF37] w-8 h-8" />
+         </div>
+         <h1 className="text-xl font-black font-egyptian tracking-widest text-white">CURLY</h1>
+         
+         {/* Badge do Plano */}
+         <div className="flex items-center gap-2 mt-2">
+            <span className="text-[10px] text-[#666] uppercase tracking-widest">{shopId}</span>
+            <span className={`text-[9px] px-2 py-0.5 rounded font-bold uppercase border border-opacity-20 ${
+                storePlan === 'Black' ? 'bg-white text-black border-white' : 
+                storePlan === 'Pro' ? 'bg-blue-900/30 text-blue-400 border-blue-500' : 
+                'bg-[#222] text-[#888] border-[#444]'
+            }`}>
+                {storePlan}
+            </span>
+         </div>
       </div>
 
-      {/* MENU */}
-      <nav className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-        <p className="px-4 text-[10px] font-bold text-[#555] uppercase mb-3 tracking-[0.15em]">Principal</p>
+      <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
         
-        {/* Agendamentos: Todos veem */}
-        <div onClick={() => navTo('/admin/appointments')} className={getItemClass('/admin/appointments')}>
-           <i className="fas fa-calendar-alt w-5 text-center"></i>
-           <span>Agenda</span>
-        </div>
+        <p className="px-4 text-[10px] font-bold text-[#444] uppercase mb-2 mt-2">Gestão</p>
 
-        {/* Serviços: Todos veem (Barbeiros apenas visualizam na lógica interna) */}
-        <div onClick={() => navTo('/admin/services')} className={getItemClass('/admin/services')}>
-           <i className="fas fa-cut w-5 text-center"></i>
-           <span>Serviços</span>
-        </div>
+        {/* MÓDULOS BÁSICOS (SEMPRE ABERTOS) */}
+        <Link to={`/${shopId}/admin/services`} className={isActive('services')}>
+          <Scissors className="w-5 h-5" />
+          <span>Serviços</span>
+        </Link>
 
-        {/* ADMINISTRAÇÃO: Admin e Gerente */}
-        {['Admin', 'Gerente', 'Financeiro'].includes(userRole) && (
-            <>
-                <p className="px-4 text-[10px] font-bold text-[#555] uppercase mt-8 mb-3 tracking-[0.15em]">Gestão</p>
+        <Link to={`/${shopId}/admin/appointments`} className={isActive('appointments')}>
+          <Calendar className="w-5 h-5" />
+          <span>Agenda</span>
+        </Link>
 
-                <div onClick={() => navTo('/admin/stock')} className={getItemClass('/admin/stock')}>
-                    <i className="fas fa-box-open w-5 text-center"></i>
-                    <span>Estoque</span>
-                </div>
-            </>
-        )}
-
-        {/* FINANCEIRO: Admin e Financeiro */}
-        {['Admin', 'Financeiro'].includes(userRole) && (
-            <div onClick={() => navTo('/admin/finance')} className={getItemClass('/admin/finance')}>
-            <i className="fas fa-chart-line w-5 text-center"></i>
-            <span>Financeiro</span>
+        {/* ESTOQUE (CONDICIONAL) */}
+        {canAccess(storePlan, 'stock') ? (
+            <Link to={`/${shopId}/admin/stock`} className={isActive('stock')}>
+              <Package className="w-5 h-5" />
+              <span>Estoque</span>
+            </Link>
+        ) : (
+            <div className="flex items-center gap-3 p-3 rounded-xl text-[#444] cursor-not-allowed group relative">
+              <Lock className="w-5 h-5 group-hover:text-red-500 transition-colors" />
+              <span>Estoque</span>
+              <span className="absolute right-2 text-[8px] border border-[#333] px-1 rounded text-[#444]">PRO</span>
             </div>
         )}
 
-        {/* CONFIGURAÇÕES: Admin e Gerente */}
-        {['Admin', 'Gerente'].includes(userRole) && (
-            <>
-                <p className="px-4 text-[10px] font-bold text-[#555] uppercase mt-8 mb-3 tracking-[0.15em]">Configuração</p>
-
-                <div onClick={() => navTo('/admin/users')} className={getItemClass('/admin/users')}>
-                    <i className="fas fa-users-cog w-5 text-center"></i>
-                    <span>Equipe</span>
+        {/* ÁREA ADMINISTRATIVA */}
+        {['Gerente', 'Admin'].includes(userRole) && (
+          <>
+            <p className="px-4 text-[10px] font-bold text-[#444] uppercase mb-2 mt-6">Administrativo</p>
+            
+            {/* FINANCEIRO (CONDICIONAL - SÓ BLACK) */}
+            {canAccess(storePlan, 'finance') ? (
+                <Link to={`/${shopId}/admin/finance`} className={isActive('finance')}>
+                  <DollarSign className="w-5 h-5" />
+                  <span>Financeiro</span>
+                </Link>
+            ) : (
+                <div className="flex items-center gap-3 p-3 rounded-xl text-[#444] cursor-not-allowed group relative">
+                   <Lock className="w-5 h-5 group-hover:text-red-500 transition-colors" />
+                   <span>Financeiro</span>
+                   <span className="absolute right-2 text-[8px] border border-[#333] px-1 rounded text-[#444]">BLACK</span>
                 </div>
+            )}
 
-                <div onClick={() => navTo('/admin/store')} className={getItemClass('/admin/store')}>
-                <i className="fas fa-store w-5 text-center"></i>
-                <span>Loja</span>
-                </div>
-            </>
+            <Link to={`/${shopId}/admin/users`} className={isActive('users')}>
+              <Users className="w-5 h-5" />
+              <span>Equipe</span>
+            </Link>
+
+            <Link to={`/${shopId}/admin/store`} className={isActive('store')}>
+              <LayoutDashboard className="w-5 h-5" />
+              <span>Minha Loja</span>
+            </Link>
+          </>
         )}
 
-        {/* SUPER ADMIN: Apenas para a loja abduch e usuário Master */}
+        {/* ÁREA HOLDING (SÓ GUTO) */}
         {isMasterStore && userRole === 'Admin' && (
-             <>
-                <p className="px-4 text-[10px] font-bold text-gold uppercase mt-8 mb-3 tracking-[0.15em]">HOLDING</p>
-                <div onClick={() => navTo('/admin/superadmin')} className={getItemClass('/admin/superadmin')}>
-                    <i className="fas fa-globe text-gold w-5 text-center"></i>
-                    <span className="text-gold">Franquias</span>
-                </div>
-             </>
+           <div className="mt-8 pt-4 border-t border-[#222]">
+              <p className="px-4 text-[10px] font-bold text-[#D4AF37] uppercase mb-3 tracking-[0.15em] flex items-center gap-2">
+                 <Globe className="w-3 h-3" /> HOLDING
+              </p>
+              <Link to={`/${shopId}/admin/superadmin`} className={isActive('superadmin')}>
+                  <Globe className="w-5 h-5" />
+                  <span>Franquias</span>
+              </Link>
+           </div>
         )}
 
       </nav>
 
       <div className="p-4 border-t border-[#222]">
-        <button onClick={handleLogout} className="flex items-center gap-3 w-full px-4 py-3 rounded-xl text-[#666] hover:text-red-400 hover:bg-[#1a0505] transition-all duration-300 text-sm font-bold border border-transparent hover:border-red-900/30">
-          <i className="fas fa-sign-out-alt w-5 text-center"></i>
-          <span>Sair</span>
+        <button onClick={handleLogout} className="flex items-center gap-3 p-3 w-full rounded-xl text-red-500 hover:bg-red-900/10 transition-colors">
+          <LogOut className="w-5 h-5" />
+          <span className="font-bold">Sair</span>
         </button>
       </div>
     </aside>

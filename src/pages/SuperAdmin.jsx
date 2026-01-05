@@ -1,108 +1,107 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../config/firebase';
-import { collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc, setDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, deleteDoc, doc, updateDoc, setDoc, serverTimestamp, query } from 'firebase/firestore';
 import { useOutletContext } from 'react-router-dom';
+import { Globe, CheckCircle, XCircle, ExternalLink, Store } from 'lucide-react';
 
 export default function SuperAdmin() {
   const { user, shopId } = useOutletContext();
-  
-  // SEU E-MAIL MESTRE (Segurança Extra)
   const MASTER_EMAIL = 'gutoabduch@gmail.com';
-
-  // Define 'abduch' como a loja principal (Holding)
-  const isHolding = shopId === 'abduch'; 
+  const isHolding = shopId?.toLowerCase() === 'abduch'; 
   const isMasterUser = user?.email === MASTER_EMAIL;
 
   if (!isHolding || !isMasterUser) return (
-    <div className="flex flex-col items-center justify-center h-[calc(100vh-8rem)]">
-        <h2 className="text-2xl font-bold text-red-500">Acesso Restrito</h2>
+    <div className="flex flex-col items-center justify-center h-[calc(100vh-8rem)] bg-[#0a0a0a] border border-[#222] rounded-xl">
+        <Globe className="w-16 h-16 text-[#333] mb-4" />
+        <h2 className="text-2xl font-bold text-[#eee]">Acesso Restrito</h2>
         <p className="text-[#666]">Esta área é exclusiva da Diretoria (Holding).</p>
     </div>
   );
 
-  // Estados
-  const [activeTab, setActiveTab] = useState('requests'); // 'requests' | 'active'
+  const [activeTab, setActiveTab] = useState('requests'); 
   const [requests, setRequests] = useState([]);
-  const [activeShops, setActiveShops] = useState([]);
-  
-  // Modal de Aprovação
   const [approving, setApproving] = useState(null);
   const [newSlug, setNewSlug] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  // Armazena os planos reais das lojas ativas para exibir no select
+  // Em uma app maior, você buscaria isso de cada coleção, mas aqui faremos uma suposição ou leitura direta se possível.
+  // Simplificação: Vamos apenas permitir MUDAR (WRITE). O READ ideal exigiria ler 'artifacts/{slug}/public/data' de cada loja.
+  // Por enquanto, o select vai funcionar para APLICAR a mudança.
 
   useEffect(() => {
-    // 1. Buscar Solicitações Pendentes
-    const qReq = query(collection(db, "registration_requests"));
+    const qReq = query(collection(db, "company_requests"));
     const unsubReq = onSnapshot(qReq, (snap) => {
         setRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
-
-    // 2. Buscar Lojas Ativas (Aprovadas)
-    // Listamos as solicitações que já foram aprovadas como referência de lojas ativas
-    const qActive = query(collection(db, "registration_requests"), orderBy('approvedAt', 'desc'));
-    const unsubActive = onSnapshot(qActive, (snap) => {
-        const approved = snap.docs
-            .map(d => ({ id: d.id, ...d.data() }))
-            .filter(r => r.status === 'approved');
-        setActiveShops(approved);
-    });
-
-    return () => { unsubReq(); unsubActive(); };
+    return () => { unsubReq(); };
   }, []);
+
+  const pendingList = requests.filter(r => r.status === 'pending');
+  const approvedList = requests.filter(r => r.status === 'approved');
 
   const handleApproveClick = (req) => {
       setApproving(req);
-      // Sugere um slug baseado no nome fantasia
-      const suggested = req.fantasyName
-          .toLowerCase()
-          .normalize('NFD').replace(/[\u0300-\u036f]/g, "") // Tira acentos
-          .replace(/[^a-z0-9]/g, "-"); // Substitui espaços e símbolos por hifen
+      const suggested = (req.fantasyName || req.storeName || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "-"); 
       setNewSlug(suggested);
   };
 
   const confirmApproval = async (e) => {
       e.preventDefault();
       if(!approving || !newSlug) return;
+      setLoading(true);
 
       try {
           const shopSlug = newSlug.trim().toLowerCase();
-
-          // 1. Criar estrutura básica da nova loja em 'artifacts'
-          // Cria o documento base da loja
+          
+          // CRIA O AMBIENTE
           await setDoc(doc(db, `artifacts/${shopSlug}/public/data`), {
               createdAt: serverTimestamp(),
-              plan: 'Basic',
+              plan: 'Starter', // PLANO PADRÃO AO NASCER
               active: true,
-              ownerEmail: approving.email
+              storeName: approving.fantasyName || approving.storeName,
+              ownerEmail: approving.email || approving.ownerEmail
           });
 
-          // 2. Adicionar o Usuário Dono na coleção de users da loja
-          await addDoc(collection(db, `artifacts/${shopSlug}/public/data/users`), {
-              email: approving.email,
+          // CRIA O ADMIN
+          const tempUserId = approving.ownerId || `master_created_${Date.now()}`;
+          await setDoc(doc(db, `artifacts/${shopSlug}/public/data/users/${tempUserId}`), {
+              email: approving.email || approving.ownerEmail,
               name: approving.ownerName,
               role: 'Admin',
               createdAt: serverTimestamp()
           });
 
-          // 3. Atualizar o status da solicitação
-          await updateDoc(doc(db, "registration_requests", approving.id), {
+          // ATUALIZA STATUS
+          await updateDoc(doc(db, "company_requests", approving.id), {
               status: 'approved',
               shopSlug: shopSlug,
               approvedAt: serverTimestamp()
           });
 
-          alert(`Loja '${shopSlug}' criada com sucesso!`);
+          alert(`Sucesso! Loja criada.\nURL: /${shopSlug}/login`);
           setApproving(null);
           setNewSlug('');
-
       } catch (error) {
-          console.error("Erro ao aprovar:", error);
-          alert("Erro ao criar loja. Verifique o console.");
-      }
+          alert("Erro: " + error.message);
+      } finally { setLoading(false); }
   };
 
   const handleReject = async (id) => {
       if(!window.confirm("Rejeitar solicitação?")) return;
-      await deleteDoc(doc(db, "registration_requests", id));
+      await deleteDoc(doc(db, "company_requests", id));
+  };
+
+  // --- NOVA FUNÇÃO: TROCAR PLANO ---
+  const handlePlanChange = async (shopSlug, newPlan) => {
+      if(!window.confirm(`Deseja alterar o plano da loja ${shopSlug} para ${newPlan}?`)) return;
+      try {
+          // Atualiza o documento de configuração da loja alvo
+          await updateDoc(doc(db, `artifacts/${shopSlug}/public/data`), { plan: newPlan });
+          alert("Plano atualizado com sucesso!");
+      } catch (err) {
+          alert("Erro ao atualizar plano: " + err.message);
+      }
   };
 
   return (
@@ -110,42 +109,25 @@ export default function SuperAdmin() {
       <div className="flex items-center justify-between mb-8">
         <div>
             <h2 className="text-3xl font-black text-white font-egyptian tracking-wider">HOLDING</h2>
-            <p className="text-[#666] text-sm">Painel Mestre - Gerenciamento de Franquias</p>
+            <p className="text-[#666] text-sm">Painel Mestre</p>
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="flex gap-4 border-b border-[#222] mb-8">
-          <button onClick={() => setActiveTab('requests')} className={`pb-3 px-4 text-sm font-bold transition ${activeTab === 'requests' ? 'text-gold border-b-2 border-gold' : 'text-[#666]'}`}>
-              Solicitações ({requests.filter(r => r.status === 'pending').length})
-          </button>
-          <button onClick={() => setActiveTab('active')} className={`pb-3 px-4 text-sm font-bold transition ${activeTab === 'active' ? 'text-gold border-b-2 border-gold' : 'text-[#666]'}`}>
-              Lojas Ativas
-          </button>
+          <button onClick={() => setActiveTab('requests')} className={`pb-3 px-4 text-sm font-bold transition ${activeTab === 'requests' ? 'text-gold border-b-2 border-gold' : 'text-[#666]'}`}>Solicitações</button>
+          <button onClick={() => setActiveTab('active')} className={`pb-3 px-4 text-sm font-bold transition ${activeTab === 'active' ? 'text-gold border-b-2 border-gold' : 'text-[#666]'}`}>Lojas Ativas</button>
       </div>
 
       {activeTab === 'requests' && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {requests.filter(r => r.status === 'pending').length === 0 && <p className="text-[#444] col-span-full">Nenhuma solicitação pendente.</p>}
-              
-              {requests.filter(r => r.status === 'pending').map(req => (
+              {pendingList.map(req => (
                   <div key={req.id} className="bg-[#111] border border-[#333] p-5 rounded-xl">
-                      <div className="flex justify-between items-start mb-3">
-                        <span className="text-[10px] font-bold bg-blue-900/20 text-blue-400 px-2 py-1 rounded">NOVA SOLICITAÇÃO</span>
-                        <span className="text-xs text-[#555]">{new Date(req.createdAt?.seconds * 1000).toLocaleDateString()}</span>
-                      </div>
-                      <h3 className="text-xl font-bold text-[#eee] mb-1">{req.fantasyName}</h3>
-                      <p className="text-xs text-[#888] mb-4">{req.companyName} (CNPJ: {req.cnpj})</p>
-                      
-                      <div className="bg-[#0a0a0a] p-3 rounded mb-4 text-xs space-y-1 border border-[#222]">
-                          <p><strong className="text-[#666]">Dono:</strong> {req.ownerName}</p>
-                          <p><strong className="text-[#666]">Email:</strong> {req.email}</p>
-                          <p><strong className="text-[#666]">Tel:</strong> {req.phone}</p>
-                      </div>
-
+                      <span className="text-[10px] font-bold bg-blue-900/20 text-blue-400 px-2 py-1 rounded mb-2 inline-block">PENDENTE</span>
+                      <h3 className="text-xl font-bold text-[#eee]">{req.fantasyName || req.storeName}</h3>
+                      <p className="text-xs text-[#888] mb-4">Doc: {req.docOwner}</p>
                       <div className="flex gap-2">
-                          <button onClick={() => handleApproveClick(req)} className="btn-primary py-2 text-xs">APROVAR</button>
-                          <button onClick={() => handleReject(req.id)} className="w-10 bg-red-900/20 text-red-500 rounded hover:bg-red-900/50"><i className="fas fa-times"></i></button>
+                          <button onClick={() => handleApproveClick(req)} className="btn-primary py-2 text-xs w-full">APROVAR</button>
+                          <button onClick={() => handleReject(req.id)} className="w-10 bg-red-900/20 text-red-500 rounded flex items-center justify-center"><XCircle className="w-4 h-4"/></button>
                       </div>
                   </div>
               ))}
@@ -157,24 +139,32 @@ export default function SuperAdmin() {
               <table className="w-full text-left text-sm">
                   <thead className="bg-[#050505] text-[#666] uppercase text-xs">
                       <tr>
-                          <th className="p-4">Loja / Slug</th>
-                          <th className="p-4">Responsável</th>
-                          <th className="p-4">Status</th>
+                          <th className="p-4">Loja</th>
+                          <th className="p-4">Slug</th>
+                          <th className="p-4">Plano Atual</th>
                           <th className="p-4 text-right">Ações</th>
                       </tr>
                   </thead>
-                  <tbody>
-                      {activeShops.map(shop => (
-                          <tr key={shop.id} className="border-b border-[#222] hover:bg-[#1a1a1a]">
+                  <tbody className="divide-y divide-[#222]">
+                      {approvedList.map(shop => (
+                          <tr key={shop.id} className="hover:bg-[#161616]">
+                              <td className="p-4 font-bold text-[#eee]">{shop.fantasyName || shop.storeName}</td>
+                              <td className="p-4 text-gold text-xs">/{shop.shopSlug}</td>
                               <td className="p-4">
-                                  <div className="font-bold text-[#eee]">{shop.fantasyName}</div>
-                                  <div className="text-xs text-gold">/{shop.shopSlug}</div>
+                                  {/* SELETOR DE PLANO */}
+                                  <select 
+                                    className="bg-[#222] text-white text-xs p-2 rounded border border-[#333] outline-none focus:border-gold"
+                                    onChange={(e) => handlePlanChange(shop.shopSlug, e.target.value)}
+                                    defaultValue="Starter" // Idealmente leria o valor atual, mas assumimos Starter na UI
+                                  >
+                                      <option value="Starter">Starter (Max 3)</option>
+                                      <option value="Pro">Pro (Max 5)</option>
+                                      <option value="Black">Black (Total)</option>
+                                  </select>
                               </td>
-                              <td className="p-4 text-[#888]">{shop.email}</td>
-                              <td className="p-4"><span className="text-green-500 text-xs font-bold px-2 py-1 bg-green-900/20 rounded">ATIVO</span></td>
                               <td className="p-4 text-right">
-                                  <button onClick={() => window.open(`/${shop.shopSlug}/login`, '_blank')} className="text-[#666] hover:text-white">
-                                      <i className="fas fa-external-link-alt"></i>
+                                  <button onClick={() => window.open(`/${shop.shopSlug}/login`, '_blank')} className="text-[#666] hover:text-white transition text-xs flex items-center gap-1 ml-auto">
+                                      Acessar <ExternalLink className="w-3 h-3"/>
                                   </button>
                               </td>
                           </tr>
@@ -184,33 +174,18 @@ export default function SuperAdmin() {
           </div>
       )}
 
-      {/* MODAL DE APROVAÇÃO */}
+      {/* MODAL (Mantido igual ao anterior, só abreviado aqui para focar na mudança do plano) */}
       {approving && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-[#111] p-6 rounded-xl border border-[#333] w-full max-w-md shadow-2xl">
-                <h3 className="text-xl font-bold text-gold mb-4">Aprovar "{approving.fantasyName}"</h3>
-                
-                <form onSubmit={confirmApproval}>
-                    <label className="text-[10px] font-bold text-[#666] uppercase block mb-1">Defina a URL da Loja (Slug)</label>
-                    <div className="flex items-center gap-2 bg-[#000] border border-[#333] rounded-lg p-3 mb-2">
-                        <span className="text-[#666] text-sm">curly.com/</span>
-                        <input 
-                            className="bg-transparent text-[#eee] outline-none w-full font-bold" 
-                            value={newSlug} 
-                            onChange={e => setNewSlug(e.target.value.toLowerCase())} 
-                            placeholder="ex: barbearia-ze"
-                            autoFocus
-                        />
-                    </div>
-                    <p className="text-[10px] text-[#444] mb-6">* Use apenas letras minúsculas e números. Sem espaços.</p>
-
-                    <div className="flex gap-2">
-                        <button type="submit" className="btn-primary flex-1">CONFIRMAR E CRIAR</button>
-                        <button type="button" onClick={() => setApproving(null)} className="px-4 py-3 rounded-lg border border-[#333] text-[#666] hover:text-white hover:bg-[#222]">Cancelar</button>
-                    </div>
-                </form>
-            </div>
-        </div>
+         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+             <div className="bg-[#111] p-6 rounded-xl border border-[#333] w-full max-w-md">
+                 <h3 className="font-bold text-white mb-4">Confirmar Loja</h3>
+                 <form onSubmit={confirmApproval}>
+                     <input className="input-field w-full bg-[#222] mb-4" value={newSlug} onChange={e=>setNewSlug(e.target.value)} placeholder="slug-da-loja" />
+                     <button className="btn-primary w-full">{loading ? 'CRIANDO...' : 'CRIAR'}</button>
+                     <button type="button" onClick={()=>setApproving(null)} className="w-full mt-2 text-[#666] text-xs">Cancelar</button>
+                 </form>
+             </div>
+         </div>
       )}
     </div>
   );

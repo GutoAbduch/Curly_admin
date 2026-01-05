@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, signOut } from 'firebase/auth';
-import { auth, db, MASTER_EMAIL } from '../config/firebase';
+import { auth, db } from '../config/firebase'; // Removi MASTER_EMAIL se não estiver usando, se estiver, mantenha
 import { useNavigate, useParams } from 'react-router-dom';
-import { doc, setDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, addDoc, collection, serverTimestamp, getDoc } from 'firebase/firestore';
+import { Scissors, AlertTriangle, CheckCircle } from 'lucide-react'; // Usando a biblioteca que instalamos
 
 export default function Login() {
   const navigate = useNavigate();
   const params = useParams();
-  
+   
   // ID da loja (fallback para renovosbbs apenas para testes locais)
   const shopId = params.shopId || 'renovosbbs';
 
@@ -27,7 +28,7 @@ export default function Login() {
     name: '', email: '', cpf: '', birthDate: '', phone: '', password: '', confirmPassword: ''
   });
 
-  // Estados do Formulário de Empresa (Franquia)
+  // Estados do Formulário de Empresa (Franquia) - CAMPOS ANTIGOS MANTIDOS
   const [companyForm, setCompanyForm] = useState({
     docOwner: '', // CPF ou CNPJ do dono
     fantasyName: '',
@@ -39,27 +40,51 @@ export default function Login() {
 
   // --- FUNÇÕES DE LOGIN ---
   const handleLogin = async (e) => {
-    e.preventDefault(); setLoading(true); setError('');
+    e.preventDefault(); 
+    setLoading(true); 
+    setError('');
+    
+    // CORREÇÃO ERRO 400: Limpa espaços em branco
+    const cleanEmail = loginEmail.trim();
+
     try { 
-        await signInWithEmailAndPassword(auth, loginEmail, loginPass); 
+        const userCred = await signInWithEmailAndPassword(auth, cleanEmail, loginPass); 
+        const user = userCred.user;
+
+        // VERIFICAÇÃO DE STATUS (PENDING) - BLOQUEIO
+        const userDocRef = doc(db, `artifacts/${shopId}/public/data/users/${user.uid}`);
+        const userDoc = await getDoc(userDocRef);
+
+        if (userDoc.exists()) {
+            const userData = userDoc.data();
+            if (userData.role === 'pending') {
+               await signOut(auth);
+               throw new Error("Seu cadastro está em análise. Aguarde aprovação do gerente.");
+            }
+        }
+
         navigate(`/${shopId}/admin/services`); 
     } catch (err) { 
         console.error(err);
-        setError("E-mail ou senha incorretos."); 
-    } finally { setLoading(false); }
-  };
-
-  const handleMasterAccess = () => {
-    setLoginEmail(MASTER_EMAIL);
-    const passInput = document.querySelector('input[type="password"]');
-    if(passInput) passInput.focus();
-    setError('Digite sua senha de administrador.');
+        if (err.message.includes("análise")) {
+            setError(err.message);
+        } else {
+            setError("E-mail ou senha incorretos."); 
+        }
+    } finally { 
+        setLoading(false); 
+    }
   };
 
   // --- FUNÇÃO CADASTRO DE USUÁRIO (FUNCIONÁRIO) ---
   const handleUserRegister = async (e) => {
     e.preventDefault();
     setLoading(true); setError('');
+
+    // VALIDAÇÃO DOS TERMOS (ADICIONADO)
+    if (!termsAccepted) {
+        setLoading(false); return setError("Você deve aceitar os Termos e Condições.");
+    }
 
     if (userForm.password !== userForm.confirmPassword) {
         setLoading(false); return setError("As senhas não conferem.");
@@ -68,13 +93,16 @@ export default function Login() {
         setLoading(false); return setError("A senha deve ter no mínimo 6 caracteres.");
     }
 
+    // CORREÇÃO ERRO 400
+    const cleanEmail = userForm.email.trim();
+
     try {
         let userCredential;
         let isNewUser = true;
 
         try {
             // Tenta criar um usuário novo
-            userCredential = await createUserWithEmailAndPassword(auth, userForm.email, userForm.password);
+            userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, userForm.password);
             // Se conseguir, atualiza o nome
             await updateProfile(userCredential.user, { displayName: userForm.name });
         } catch (createError) {
@@ -82,7 +110,7 @@ export default function Login() {
             if (createError.code === 'auth/email-already-in-use') {
                 try {
                     // Tenta logar com a senha fornecida no cadastro
-                    userCredential = await signInWithEmailAndPassword(auth, userForm.email, userForm.password);
+                    userCredential = await signInWithEmailAndPassword(auth, cleanEmail, userForm.password);
                     isNewUser = false; // Usuário já existia
                 } catch (loginError) {
                     throw new Error("Este e-mail já possui uma conta, mas a senha informada não confere.");
@@ -98,13 +126,13 @@ export default function Login() {
         // Regra de Negócio: Conta nasce "Sem Cargo" (role: 'pending')
         await setDoc(doc(db, `artifacts/${shopId}/public/data/users/${user.uid}`), {
             name: userForm.name,
-            email: userForm.email,
+            email: cleanEmail,
             cpf: userForm.cpf,
             birthDate: userForm.birthDate,
             phone: userForm.phone,
             role: 'pending', // <--- IMPORTANTE: Usuário nasce bloqueado nesta loja
-            createdAt: serverTimestamp(), // Data de entrada nesta loja
-            linkedAt: isNewUser ? serverTimestamp() : serverTimestamp() // Apenas registro de log
+            createdAt: serverTimestamp(), 
+            linkedAt: serverTimestamp() 
         });
 
         // Se era usuário novo ou login forçado, fazemos logout para ele logar corretamente
@@ -118,12 +146,12 @@ export default function Login() {
         
         setMode('login');
         setUserForm({ name: '', email: '', cpf: '', birthDate: '', phone: '', password: '', confirmPassword: '' });
+        setTermsAccepted(false);
 
     } catch (err) {
-        // Se a mensagem de erro vier do nosso throw manual, usamos ela. Se não, traduzimos.
         setError(err.message === "Este e-mail já possui uma conta, mas a senha informada não confere." 
             ? err.message 
-            : translateFirebaseError(err.code)
+            : "Erro ao cadastrar. Verifique os dados."
         );
     } finally {
         setLoading(false);
@@ -164,12 +192,6 @@ export default function Login() {
     }
   };
 
-  const translateFirebaseError = (code) => {
-      if (code === 'auth/email-already-in-use') return 'Este e-mail já está cadastrado.';
-      if (code === 'auth/weak-password') return 'A senha é muito fraca.';
-      return 'Erro ao cadastrar. Verifique os dados.';
-  };
-
   return (
     <div className="fixed inset-0 z-50 bg-[#050505] flex items-center justify-center p-4 overflow-y-auto">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#1a1500] to-[#000000] opacity-80 pointer-events-none"></div>
@@ -178,8 +200,8 @@ export default function Login() {
         
         {/* HEADER DA IDENTIDADE VISUAL */}
         <div className="text-center mb-6">
-            <div className="inline-block p-3 rounded-full border border-[#D4AF37] mb-4 shadow-[0_0_15px_rgba(212,175,55,0.2)]">
-                <i className="fas fa-cut text-2xl text-[#D4AF37]"></i>
+            <div className="inline-flex items-center justify-center p-3 rounded-full border border-[#D4AF37] mb-4 shadow-[0_0_15px_rgba(212,175,55,0.2)]">
+                <Scissors className="w-6 h-6 text-[#D4AF37]" />
             </div>
             <h1 className="text-4xl font-black font-egyptian text-[#D4AF37] tracking-widest mb-1">CURLY</h1>
             <p className="text-[#444] text-[10px] mt-2 uppercase tracking-widest border border-[#222] inline-block px-2 py-1 rounded">
@@ -194,10 +216,10 @@ export default function Login() {
         {mode === 'login' && (
             <form onSubmit={handleLogin} className="space-y-4 animate-fade-in">
                 <h2 className="text-center text-[#eee] font-bold text-lg mb-4">Acesso ao Sistema</h2>
-                <input className="input-field" placeholder="E-mail" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} required />
-                <input className="input-field" placeholder="Senha" type="password" value={loginPass} onChange={e=>setLoginPass(e.target.value)} required />
+                <input className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee]" placeholder="E-mail" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} required />
+                <input className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee]" placeholder="Senha" type="password" value={loginPass} onChange={e=>setLoginPass(e.target.value)} required />
                 
-                <button disabled={loading} className="btn-primary mt-4">
+                <button disabled={loading} className="w-full bg-[#D4AF37] text-black font-bold py-3 rounded mt-4 hover:bg-[#b5952f] transition-colors">
                     {loading ? 'ENTRANDO...' : 'ACESSAR PAINEL'}
                 </button>
 
@@ -208,7 +230,6 @@ export default function Login() {
                         <span className="text-[#333]">|</span>
                         <button type="button" onClick={()=>setMode('registerCompany')} className="text-xs text-[#D4AF37] hover:underline font-bold">Quero Contratar (Empresa)</button>
                     </div>
-                    <button type="button" onClick={handleMasterAccess} className="text-[10px] text-[#333] hover:text-[#555] mt-4">Login Master</button>
                 </div>
             </form>
         )}
@@ -221,22 +242,32 @@ export default function Login() {
                     <button type="button" onClick={()=>setMode('login')} className="text-xs text-[#666] hover:text-[#eee]">Voltar</button>
                 </div>
                 
-                <input className="input-field" placeholder="Nome Completo" value={userForm.name} onChange={e=>setUserForm({...userForm, name: e.target.value})} required />
-                <input className="input-field" placeholder="E-mail Pessoal" type="email" value={userForm.email} onChange={e=>setUserForm({...userForm, email: e.target.value})} required />
+                <input className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee]" placeholder="Nome Completo" value={userForm.name} onChange={e=>setUserForm({...userForm, name: e.target.value})} required />
+                <input className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee]" placeholder="E-mail Pessoal" type="email" value={userForm.email} onChange={e=>setUserForm({...userForm, email: e.target.value})} required />
                 <div className="grid grid-cols-2 gap-2">
-                    <input className="input-field" placeholder="CPF" value={userForm.cpf} onChange={e=>setUserForm({...userForm, cpf: e.target.value})} required />
-                    <input className="input-field" placeholder="Data Nasc." type="date" value={userForm.birthDate} onChange={e=>setUserForm({...userForm, birthDate: e.target.value})} required />
+                    <input className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee]" placeholder="CPF" value={userForm.cpf} onChange={e=>setUserForm({...userForm, cpf: e.target.value})} required />
+                    <input className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee]" placeholder="Data Nasc." type="date" value={userForm.birthDate} onChange={e=>setUserForm({...userForm, birthDate: e.target.value})} required />
                 </div>
-                <input className="input-field" placeholder="Celular / WhatsApp" value={userForm.phone} onChange={e=>setUserForm({...userForm, phone: e.target.value})} required />
-                <input className="input-field" placeholder="Senha" type="password" value={userForm.password} onChange={e=>setUserForm({...userForm, password: e.target.value})} required />
-                <input className="input-field" placeholder="Confirmar Senha" type="password" value={userForm.confirmPassword} onChange={e=>setUserForm({...userForm, confirmPassword: e.target.value})} required />
+                <input className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee]" placeholder="Celular / WhatsApp" value={userForm.phone} onChange={e=>setUserForm({...userForm, phone: e.target.value})} required />
+                <input className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee]" placeholder="Senha" type="password" value={userForm.password} onChange={e=>setUserForm({...userForm, password: e.target.value})} required />
+                <input className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee]" placeholder="Confirmar Senha" type="password" value={userForm.confirmPassword} onChange={e=>setUserForm({...userForm, confirmPassword: e.target.value})} required />
 
-                <div className="bg-yellow-900/10 border border-yellow-900/30 p-2 rounded text-[10px] text-yellow-500 text-center mb-2">
-                    <i className="fas fa-exclamation-triangle mr-1"></i>
-                    Sua conta será criada como "Pendente". O gerente da loja precisará aprovar seu acesso.
+                {/* NOVO: CHECKBOX TERMOS PARA USUÁRIOS */}
+                <div className="flex items-start gap-2 mt-2 bg-[#111] p-3 rounded border border-[#222]">
+                    <input type="checkbox" id="termsUser" className="mt-1" checked={termsAccepted} onChange={e=>setTermsAccepted(e.target.checked)} />
+                    <label htmlFor="termsUser" className="text-xs text-[#888] cursor-pointer select-none">
+                        Li e aceito os <span className="text-[#D4AF37] underline font-bold">Termos e Condições de Uso</span>.
+                    </label>
                 </div>
 
-                <button disabled={loading} className="btn-primary">{loading ? 'CRIANDO...' : 'CRIAR CONTA'}</button>
+                <div className="bg-yellow-900/10 border border-yellow-900/30 p-2 rounded text-[10px] text-yellow-500 text-center mb-2 flex items-center justify-center gap-1">
+                    <AlertTriangle className="w-3 h-3" />
+                    Sua conta será criada como "Pendente".
+                </div>
+
+                <button disabled={loading} className="w-full bg-[#D4AF37] text-black font-bold py-3 rounded hover:bg-[#b5952f] transition-colors">
+                    {loading ? 'CRIANDO...' : 'CRIAR CONTA'}
+                </button>
             </form>
         )}
 
@@ -248,21 +279,23 @@ export default function Login() {
                     <button type="button" onClick={()=>setMode('login')} className="text-xs text-[#666] hover:text-[#eee]">Voltar</button>
                 </div>
 
-                <input className="input-field" placeholder="Nome Fantasia da Barbearia" value={companyForm.fantasyName} onChange={e=>setCompanyForm({...companyForm, fantasyName: e.target.value})} required />
-                <input className="input-field" placeholder="Nome do Responsável Legal" value={companyForm.ownerName} onChange={e=>setCompanyForm({...companyForm, ownerName: e.target.value})} required />
-                <input className="input-field" placeholder="CPF ou CNPJ do Responsável" value={companyForm.docOwner} onChange={e=>setCompanyForm({...companyForm, docOwner: e.target.value})} required />
-                <input className="input-field" placeholder="E-mail Comercial" type="email" value={companyForm.email} onChange={e=>setCompanyForm({...companyForm, email: e.target.value})} required />
-                <input className="input-field" placeholder="Telefone de Contato" value={companyForm.phone} onChange={e=>setCompanyForm({...companyForm, phone: e.target.value})} required />
-                <textarea className="input-field h-20" placeholder="Endereço Completo da Empresa" value={companyForm.address} onChange={e=>setCompanyForm({...companyForm, address: e.target.value})} required />
+                <input className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee]" placeholder="Nome Fantasia da Barbearia" value={companyForm.fantasyName} onChange={e=>setCompanyForm({...companyForm, fantasyName: e.target.value})} required />
+                <input className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee]" placeholder="Nome do Responsável Legal" value={companyForm.ownerName} onChange={e=>setCompanyForm({...companyForm, ownerName: e.target.value})} required />
+                <input className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee]" placeholder="CPF ou CNPJ do Responsável" value={companyForm.docOwner} onChange={e=>setCompanyForm({...companyForm, docOwner: e.target.value})} required />
+                <input className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee]" placeholder="E-mail Comercial" type="email" value={companyForm.email} onChange={e=>setCompanyForm({...companyForm, email: e.target.value})} required />
+                <input className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee]" placeholder="Telefone de Contato" value={companyForm.phone} onChange={e=>setCompanyForm({...companyForm, phone: e.target.value})} required />
+                <textarea className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee] h-20" placeholder="Endereço Completo da Empresa" value={companyForm.address} onChange={e=>setCompanyForm({...companyForm, address: e.target.value})} required />
 
                 <div className="flex items-start gap-2 mt-2 bg-[#111] p-3 rounded border border-[#222]">
                     <input type="checkbox" id="terms" className="mt-1" checked={termsAccepted} onChange={e=>setTermsAccepted(e.target.checked)} />
                     <label htmlFor="terms" className="text-xs text-[#888] cursor-pointer select-none">
-                        Li e aceito os <span className="text-gold underline font-bold">Termos e Condições de Uso</span> da Plataforma Curly.
+                        Li e aceito os <span className="text-[#D4AF37] underline font-bold">Termos e Condições de Uso</span> da Plataforma Curly.
                     </label>
                 </div>
 
-                <button disabled={loading} className="btn-primary mt-2">{loading ? 'ENVIANDO...' : 'SOLICITAR SISTEMA'}</button>
+                <button disabled={loading} className="w-full bg-[#D4AF37] text-black font-bold py-3 rounded mt-2 hover:bg-[#b5952f] transition-colors">
+                    {loading ? 'ENVIANDO...' : 'SOLICITAR SISTEMA'}
+                </button>
             </form>
         )}
 
