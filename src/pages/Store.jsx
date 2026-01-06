@@ -3,6 +3,8 @@ import { db, storage } from '../config/firebase';
 import { doc, getDoc, setDoc, query, collection, where, getDocs } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useOutletContext } from 'react-router-dom';
+import { PLAN_LIMITS } from '../config/plans'; 
+import { CheckCircle, Crown, Lock, Star, CreditCard } from 'lucide-react'; // Ícones adicionados
 
 export default function Store() {
   const { role, shopId } = useOutletContext();
@@ -11,6 +13,13 @@ export default function Store() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [emergencyDate, setEmergencyDate] = useState('');
+
+  // ESTADO DO PLANO ATUAL DA LOJA
+  const [currentPlan, setCurrentPlan] = useState('Starter');
+
+  // MODAL DE PAGAMENTO
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [selectedPlanForPayment, setSelectedPlanForPayment] = useState(null);
 
   // ESTADO INICIAL (Visual enquanto carrega)
   const [schedule, setSchedule] = useState([
@@ -47,14 +56,18 @@ export default function Store() {
   const loadData = async () => {
     setLoading(true);
     try {
-        // Caminho corrigido para evitar o erro de segmentos ímpares
         const docRef = doc(db, `artifacts/${shopId}/public/data/store_settings/full_config`);
         const docSnap = await getDoc(docRef);
         
+        const rootDocRef = doc(db, `artifacts/${shopId}/public/data`);
+        const rootDocSnap = await getDoc(rootDocRef);
+
+        if (rootDocSnap.exists()) {
+             setCurrentPlan(rootDocSnap.data().plan || 'Starter');
+        }
+        
         if(docSnap.exists()) {
             const data = docSnap.data();
-            
-            // Carrega Horários (com proteção para o índice 'day')
             if(data.schedule && Array.isArray(data.schedule)) {
                 const dbSchedule = data.schedule.map((item, index) => ({
                     ...item,
@@ -62,7 +75,6 @@ export default function Store() {
                 }));
                 setSchedule(dbSchedule);
             }
-
             if(data.info) setInfo(data.info);
             if(data.branding) setBranding(data.branding);
         }
@@ -73,7 +85,6 @@ export default function Store() {
     }
   };
 
-  // Upload de Imagem (Logo ou Banner)
   const handleImageUpload = async (e, type) => {
       const file = e.target.files[0];
       if (!file) return;
@@ -86,7 +97,6 @@ export default function Store() {
           const fileRef = ref(storage, `logos/${shopId}/${type}_${Date.now()}`);
           await uploadBytes(fileRef, file);
           const url = await getDownloadURL(fileRef);
-          
           setBranding(prev => ({ ...prev, [type]: url }));
           alert("Imagem carregada! Clique em 'Salvar Configurações' para confirmar.");
       } catch (err) {
@@ -97,12 +107,10 @@ export default function Store() {
       }
   };
 
-  // Salvar TUDO em um único lugar
   const saveAllSettings = async (e) => {
       e.preventDefault();
       try {
           const docRef = doc(db, `artifacts/${shopId}/public/data/store_settings/full_config`);
-          
           await setDoc(docRef, { 
               schedule,
               info,
@@ -125,22 +133,14 @@ export default function Store() {
 
   const handleEmergency = async () => {
       if(!emergencyDate) return alert("Selecione uma data.");
-      
-      const q = query(
-          collection(db, `artifacts/${shopId}/public/data/appointments`), 
-          where('date', '==', emergencyDate)
-      );
-      
+      const q = query(collection(db, `artifacts/${shopId}/public/data/appointments`), where('date', '==', emergencyDate));
       const s = await getDocs(q); 
       const emails = new Set(); 
-      
       s.forEach(d => { 
           const data = d.data();
           if(data.clientEmail) emails.add(data.clientEmail); 
       });
-      
       if(emails.size === 0) return alert("Nenhum cliente com e-mail agendado para esta data.");
-      
       window.open(`mailto:?bcc=${Array.from(emails).join(',')}&subject=Aviso Importante&body=Prezados clientes...`);
   };
 
@@ -160,6 +160,7 @@ export default function Store() {
                 {id: 'visual', icon: 'fas fa-paint-brush', label: 'Visual'},
                 {id: 'infos', icon: 'fas fa-info-circle', label: 'Infos'},
                 {id: 'hours', icon: 'fas fa-clock', label: 'Horários'},
+                {id: 'plans', icon: 'fas fa-gem', label: 'Assinatura'}, // NOVA ABA
                 {id: 'danger', icon: 'fas fa-exclamation-triangle', label: 'Emergência'}
             ].map(tab => (
                 <button 
@@ -179,12 +180,8 @@ export default function Store() {
         {activeTab === 'visual' && (
             <div className="space-y-8 animate-fade-in">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    
-                    {/* COLUNA ESQUERDA: IMAGENS */}
                     <div className="space-y-6">
                         <h3 className="text-sm font-bold text-[#eee] uppercase border-b border-[#222] pb-2">Imagens</h3>
-                        
-                        {/* Upload Logo */}
                         <div>
                             <label className="text-[10px] font-bold text-[#666] uppercase block mb-2">Logo (PNG Transparente)</label>
                             <div className="flex items-center gap-4">
@@ -200,8 +197,6 @@ export default function Store() {
                                 </div>
                             </div>
                         </div>
-
-                        {/* Upload Banner */}
                         <div>
                             <label className="text-[10px] font-bold text-[#666] uppercase block mb-2">Banner / Capa</label>
                             <div className="w-full h-32 bg-[#111] border border-[#333] rounded-xl flex items-center justify-center overflow-hidden relative group mb-2">
@@ -212,18 +207,13 @@ export default function Store() {
                                 <input type="file" onChange={(e) => handleImageUpload(e, 'bannerUrl')} className="hidden" accept="image/*" disabled={uploading} />
                             </label>
                         </div>
-
-                        {/* Slogan */}
                         <div>
                             <label className="text-[10px] font-bold text-[#666] uppercase block mb-1">Frase de Efeito</label>
                             <input className="input-field" value={branding.slogan} onChange={e => setBranding({...branding, slogan: e.target.value})} placeholder="Ex: Estilo e tradição." />
                         </div>
                     </div>
-                    
-                    {/* COLUNA DIREITA: CORES E PREVIEW */}
                     <div className="space-y-6">
                         <h3 className="text-sm font-bold text-[#eee] uppercase border-b border-[#222] pb-2">Cores & Preview</h3>
-                        
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <label className="text-[10px] text-[#666] uppercase block mb-1">Cor Principal</label>
@@ -240,8 +230,6 @@ export default function Store() {
                                 </div>
                             </div>
                         </div>
-
-                        {/* PRÉVIA DO SITE */}
                         <div>
                             <label className="text-[10px] font-bold text-[#666] uppercase block mb-2">Simulação do Site do Cliente</label>
                             <div className="border border-[#333] rounded-xl overflow-hidden shadow-lg" style={{ backgroundColor: branding.secondaryColor }}>
@@ -260,7 +248,6 @@ export default function Store() {
                                     </div>
                                 </div>
                             </div>
-                            <p className="text-[9px] text-[#666] mt-2 text-center italic">Prévia apenas ilustrativa.</p>
                         </div>
                     </div>
                 </div>
@@ -291,13 +278,11 @@ export default function Store() {
                     {schedule.map((day, i) => (
                         <div key={i} className={`flex flex-col sm:flex-row gap-4 items-center p-3 rounded-xl border ${day.closed ? 'bg-[#111] border-[#222] opacity-50' : 'bg-[#0a0a0a] border-gold/30'}`}>
                             <span className="w-24 font-bold text-sm text-gold uppercase tracking-wider text-center sm:text-left">{day.label}</span>
-                            
                             <div className="flex items-center gap-2 flex-1 justify-center sm:justify-start">
                                 <input type="time" disabled={day.closed} value={day.open} onChange={e => updateScheduleDay(i, 'open', e.target.value)} className="bg-[#000] border border-[#333] text-[#eee] rounded p-2 text-sm outline-none focus:border-gold" />
                                 <span className="text-[#666]">-</span>
                                 <input type="time" disabled={day.closed} value={day.close} onChange={e => updateScheduleDay(i, 'close', e.target.value)} className="bg-[#000] border border-[#333] text-[#eee] rounded p-2 text-sm outline-none focus:border-gold" />
                             </div>
-
                             <label className="flex items-center gap-2 cursor-pointer bg-[#111] px-3 py-2 rounded-lg border border-[#333] hover:border-gold">
                                 <input type="checkbox" checked={day.closed} onChange={e => updateScheduleDay(i, 'closed', e.target.checked)} className="accent-red-500 w-4 h-4" />
                                 <span className={`text-xs font-bold ${day.closed ? 'text-red-500' : 'text-[#888]'}`}>{day.closed ? 'FECHADO' : 'ABERTO'}</span>
@@ -308,7 +293,82 @@ export default function Store() {
             </div>
         )}
 
-        {/* === ABA 4: EMERGÊNCIA === */}
+        {/* === NOVIDADE: ABA 4: PLANOS/ASSINATURA === */}
+        {activeTab === 'plans' && (
+            <div className="animate-fade-in">
+                <div className="text-center mb-8">
+                    <h3 className="text-xl font-bold text-white mb-2 font-egyptian">Plano Atual</h3>
+                    <div className="inline-flex items-center gap-2 bg-gradient-to-r from-yellow-900/40 to-[#0a0a0a] border border-gold/30 px-6 py-2 rounded-full">
+                        {currentPlan === 'Black' ? <Crown className="text-gold w-5 h-5" /> : <Star className="text-gold w-5 h-5" />}
+                        <span className="text-gold font-bold tracking-widest uppercase">{PLAN_LIMITS[currentPlan]?.label || currentPlan}</span>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {Object.entries(PLAN_LIMITS).map(([key, plan]) => {
+                        const isCurrent = key === currentPlan;
+                        const isRecommended = plan.recommended;
+
+                        return (
+                            <div key={key} className={`relative flex flex-col p-6 rounded-2xl border transition-all duration-300 ${isCurrent ? 'bg-[#111] border-gold shadow-[0_0_30px_rgba(212,175,55,0.1)] scale-105 z-10' : 'bg-[#0a0a0a] border-[#222] hover:border-[#444]'}`}>
+                                {isRecommended && !isCurrent && (
+                                    <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-blue-600 text-white text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+                                        Recomendado
+                                    </div>
+                                )}
+                                {isCurrent && (
+                                    <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-gold text-black text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider flex items-center gap-1">
+                                        <CheckCircle className="w-3 h-3" /> Seu Plano
+                                    </div>
+                                )}
+
+                                <div className="mb-4">
+                                    <h4 className={`text-lg font-bold font-egyptian ${isCurrent ? 'text-gold' : 'text-white'}`}>{plan.label}</h4>
+                                    <p className="text-[#666] text-xs h-8">{plan.description}</p>
+                                </div>
+
+                                <div className="mb-6 pb-6 border-b border-[#222]">
+                                    <span className="text-2xl font-bold text-[#eee]">{plan.price}</span>
+                                    <span className="text-[#666] text-xs">{plan.period}</span>
+                                </div>
+
+                                <ul className="space-y-3 mb-8 flex-1">
+                                    {plan.benefits?.map((benefit, idx) => (
+                                        <li key={idx} className="flex items-center gap-3 text-xs text-[#ccc]">
+                                            <CheckCircle className={`w-4 h-4 flex-shrink-0 ${isCurrent ? 'text-gold' : 'text-[#444]'}`} />
+                                            {benefit}
+                                        </li>
+                                    ))}
+                                    {plan.blocked?.includes('finance') && (
+                                        <li className="flex items-center gap-3 text-xs text-[#444] line-through decoration-red-900">
+                                            <Lock className="w-4 h-4 flex-shrink-0 text-red-900/50" />
+                                            Gestão Financeira
+                                        </li>
+                                    )}
+                                </ul>
+
+                                <button 
+                                    disabled={isCurrent}
+                                    onClick={() => {
+                                        setSelectedPlanForPayment(plan);
+                                        setShowPaymentModal(true);
+                                    }}
+                                    className={`w-full py-3 rounded-xl text-xs font-bold transition-all ${
+                                        isCurrent 
+                                        ? 'bg-[#222] text-[#666] cursor-default' 
+                                        : 'bg-white text-black hover:bg-gold'
+                                    }`}
+                                >
+                                    {isCurrent ? 'ATIVO' : 'ASSINAR COM CARTÃO'}
+                                </button>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        )}
+
+        {/* === ABA 5: EMERGÊNCIA === */}
         {activeTab === 'danger' && (
             <div className="animate-fade-in space-y-6">
                 <div className="bg-red-900/10 border border-red-900/30 rounded-2xl p-6">
@@ -326,13 +386,66 @@ export default function Store() {
         )}
 
         {/* BOTÃO FLUTUANTE DE SALVAR */}
-        <div className="mt-8 pt-6 border-t border-[#222] flex justify-end sticky bottom-0 bg-[#0a0a0a]/95 backdrop-blur p-4 -mx-6 -mb-6 rounded-b-2xl z-20 border-t border-gold/10">
-            <button onClick={saveAllSettings} disabled={uploading} className="btn-primary w-full md:w-auto px-10 py-3 text-sm shadow-[0_0_20px_rgba(212,175,55,0.2)] hover:shadow-[0_0_30px_rgba(212,175,55,0.4)] transition-all">
-                {uploading ? 'SALVANDO DADOS...' : 'SALVAR TODAS AS CONFIGURAÇÕES'}
-            </button>
-        </div>
+        {activeTab !== 'plans' && (
+            <div className="mt-8 pt-6 border-t border-[#222] flex justify-end sticky bottom-0 bg-[#0a0a0a]/95 backdrop-blur p-4 -mx-6 -mb-6 rounded-b-2xl z-20 border-t border-gold/10">
+                <button onClick={saveAllSettings} disabled={uploading} className="btn-primary w-full md:w-auto px-10 py-3 text-sm shadow-[0_0_20px_rgba(212,175,55,0.2)] hover:shadow-[0_0_30px_rgba(212,175,55,0.4)] transition-all">
+                    {uploading ? 'SALVANDO DADOS...' : 'SALVAR TODAS AS CONFIGURAÇÕES'}
+                </button>
+            </div>
+        )}
 
       </div>
+      
+      {/* MODAL DE PAGAMENTO (SIMULAÇÃO) */}
+      {showPaymentModal && (
+          <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+              <div className="bg-[#111] p-6 rounded-xl border border-[#333] w-full max-w-md shadow-2xl relative animate-fade-in">
+                  <button onClick={() => setShowPaymentModal(false)} className="absolute top-4 right-4 text-[#666] hover:text-white"><i className="fas fa-times"></i></button>
+                  
+                  <div className="text-center mb-6">
+                      <div className="w-12 h-12 bg-green-900/20 rounded-full flex items-center justify-center mx-auto mb-3 border border-green-900/50">
+                          <CreditCard className="text-green-500 w-6 h-6" />
+                      </div>
+                      <h3 className="text-xl font-bold text-white">Assinar Plano {selectedPlanForPayment?.label}</h3>
+                      <p className="text-[#666] text-xs mt-1">Total: <span className="text-white font-bold">{selectedPlanForPayment?.price}</span>{selectedPlanForPayment?.period}</p>
+                  </div>
+
+                  <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); alert("Integração com Gateway de Pagamento (Asaas/Stripe) será implementada na Fase 3."); setShowPaymentModal(false); }}>
+                      <div>
+                          <label className="text-[10px] font-bold text-[#666] uppercase block mb-1">Nome no Cartão</label>
+                          <input className="input-field w-full bg-[#222] border-[#444] text-white" placeholder="Como impresso no cartão" required />
+                      </div>
+                      <div>
+                          <label className="text-[10px] font-bold text-[#666] uppercase block mb-1">Número do Cartão</label>
+                          <div className="relative">
+                              <input className="input-field w-full pl-10 bg-[#222] border-[#444] text-white" placeholder="0000 0000 0000 0000" required />
+                              <CreditCard className="w-4 h-4 text-[#666] absolute left-3 top-3.5" />
+                          </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                          <div>
+                              <label className="text-[10px] font-bold text-[#666] uppercase block mb-1">Validade</label>
+                              <input className="input-field w-full bg-[#222] border-[#444] text-white" placeholder="MM/AA" required />
+                          </div>
+                          <div>
+                              <label className="text-[10px] font-bold text-[#666] uppercase block mb-1">CVV</label>
+                              <input className="input-field w-full bg-[#222] border-[#444] text-white" placeholder="123" required />
+                          </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 bg-[#222] p-3 rounded text-[10px] text-[#888]">
+                          <Lock className="w-3 h-3 text-green-500" />
+                          Ambiente Seguro. Seus dados são criptografados.
+                      </div>
+
+                      <button className="btn-primary w-full py-3 mt-2 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white border-none">
+                          CONFIRMAR ASSINATURA
+                      </button>
+                  </form>
+              </div>
+          </div>
+      )}
+
       <style>{` .lbl { font-size: 10px; font-weight: bold; color: #666; text-transform: uppercase; display: block; margin-bottom: 4px; } `}</style>
     </div>
   );

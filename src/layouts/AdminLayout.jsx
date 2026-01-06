@@ -11,8 +11,11 @@ export default function AdminLayout() {
   
   const [user, setUser] = useState(null);
   const [role, setRole] = useState(null);
-  const [storePlan, setStorePlan] = useState('Starter'); // Valor padrão seguro
+  const [storePlan, setStorePlan] = useState('Starter');
   const [loading, setLoading] = useState(true);
+  
+  // Variáveis globais de suporte (buscadas do banco)
+  const [globalSettings, setGlobalSettings] = useState({ whatsapp: '', pixKey: '' });
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -22,7 +25,7 @@ export default function AdminLayout() {
       }
 
       try {
-        // 1. Busca dados do Usuário (Cargo/Role)
+        // 1. Busca Usuário
         const userDocRef = doc(db, `artifacts/${shopId}/public/data/users/${currentUser.uid}`);
         const userSnap = await getDoc(userDocRef);
 
@@ -31,23 +34,44 @@ export default function AdminLayout() {
            setRole(userData.role);
            setUser(currentUser);
 
-           // 2. Busca dados da Loja (PLANO ATUAL)
-           // Lendo diretamente da configuração pública da loja
+           // 2. Busca Configuração da Loja
            const storeDocRef = doc(db, `artifacts/${shopId}/public/data`);
            const storeSnap = await getDoc(storeDocRef);
            
-           if (storeSnap.exists()) {
-               const storeData = storeSnap.data();
-               // Se não tiver plano definido no banco, assume 'Starter'
-               setStorePlan(storeData.plan || 'Starter');
+           // 3. Busca Configurações Globais (WhatsApp do Suporte, Pagamentos)
+           // Elas ficam salvas na loja Mestre (ABDUCH)
+           const globalRef = doc(db, `artifacts/abduch/public/data/store_settings/global_config`);
+           const globalSnap = await getDoc(globalRef);
+           if (globalSnap.exists()) {
+               setGlobalSettings(globalSnap.data());
            }
 
+           // --- LÓGICA DE PLANOS E TRAVAS ---
+           let finalPlan = 'Starter';
+
+           // A. Se for o QG (ABDUCH), é sempre BLACK (Você nunca é bloqueado)
+           if (shopId.toLowerCase() === 'abduch') {
+               finalPlan = 'Black';
+           } 
+           else if (storeSnap.exists()) {
+               const data = storeSnap.data();
+               const now = new Date();
+               
+               // B. Verifica se está no Período de Teste (15 dias)
+               if (data.trialEndsAt && now < data.trialEndsAt.toDate()) {
+                   finalPlan = 'Black'; // Libera tudo durante o teste
+               } else {
+                   finalPlan = data.plan || 'Starter';
+               }
+           }
+           
+           setStorePlan(finalPlan);
+
         } else {
-           // Usuário logado no Auth mas sem registro nesta loja
            navigate(`/${shopId}/login`);
         }
       } catch (error) {
-        console.error("Erro ao carregar layout:", error);
+        console.error("Erro layout:", error);
       } finally {
         setLoading(false);
       }
@@ -64,11 +88,15 @@ export default function AdminLayout() {
 
   return (
     <div className="flex min-h-screen bg-black">
-      {/* Passamos o Plano para o Sidebar controlar os menus */}
-      <Sidebar userRole={role} shopId={shopId} storePlan={storePlan} />
+      {/* Passamos as configs globais para o Sidebar usar no botão Fale Conosco */}
+      <Sidebar 
+          userRole={role} 
+          shopId={shopId} 
+          storePlan={storePlan} 
+          supportWhatsapp={globalSettings.whatsapp}
+      />
       
       <main className="ml-64 flex-1 p-8 bg-[#050505] overflow-y-auto h-screen">
-        {/* Passamos o Plano para as páginas internas (Users, Finance, etc) */}
         <Outlet context={{ user, role, shopId, storePlan }} />
       </main>
     </div>
