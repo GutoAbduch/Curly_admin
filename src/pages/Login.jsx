@@ -1,16 +1,16 @@
 import React, { useState } from 'react';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, signOut } from 'firebase/auth';
-import { auth, db } from '../config/firebase'; // Removi MASTER_EMAIL se não estiver usando, se estiver, mantenha
+import { auth, db } from '../config/firebase'; 
 import { useNavigate, useParams } from 'react-router-dom';
 import { doc, setDoc, addDoc, collection, serverTimestamp, getDoc } from 'firebase/firestore';
-import { Scissors, AlertTriangle, CheckCircle } from 'lucide-react'; // Usando a biblioteca que instalamos
+import { Scissors, AlertTriangle, CheckCircle } from 'lucide-react'; 
 
 export default function Login() {
   const navigate = useNavigate();
   const params = useParams();
    
-  // ID da loja (fallback para renovosbbs apenas para testes locais)
-  const shopId = params.shopId || 'renovosbbs';
+  // CORREÇÃO: Padrão alterado de 'renovosbbs' para 'abduch' (Seu QG)
+  const shopId = params.shopId || 'abduch';
 
   // Estados de Controle de Tela
   // mode: 'login' | 'registerUser' | 'registerCompany'
@@ -28,9 +28,9 @@ export default function Login() {
     name: '', email: '', cpf: '', birthDate: '', phone: '', password: '', confirmPassword: ''
   });
 
-  // Estados do Formulário de Empresa (Franquia) - CAMPOS ANTIGOS MANTIDOS
+  // Estados do Formulário de Empresa (Franquia)
   const [companyForm, setCompanyForm] = useState({
-    docOwner: '', // CPF ou CNPJ do dono
+    docOwner: '', 
     fantasyName: '',
     ownerName: '',
     address: '',
@@ -44,14 +44,13 @@ export default function Login() {
     setLoading(true); 
     setError('');
     
-    // CORREÇÃO ERRO 400: Limpa espaços em branco
     const cleanEmail = loginEmail.trim();
 
     try { 
         const userCred = await signInWithEmailAndPassword(auth, cleanEmail, loginPass); 
         const user = userCred.user;
 
-        // VERIFICAÇÃO DE STATUS (PENDING) - BLOQUEIO
+        // VERIFICAÇÃO DE STATUS (PENDING)
         const userDocRef = doc(db, `artifacts/${shopId}/public/data/users/${user.uid}`);
         const userDoc = await getDoc(userDocRef);
 
@@ -81,7 +80,6 @@ export default function Login() {
     e.preventDefault();
     setLoading(true); setError('');
 
-    // VALIDAÇÃO DOS TERMOS (ADICIONADO)
     if (!termsAccepted) {
         setLoading(false); return setError("Você deve aceitar os Termos e Condições.");
     }
@@ -93,7 +91,6 @@ export default function Login() {
         setLoading(false); return setError("A senha deve ter no mínimo 6 caracteres.");
     }
 
-    // CORREÇÃO ERRO 400
     const cleanEmail = userForm.email.trim();
 
     try {
@@ -101,41 +98,37 @@ export default function Login() {
         let isNewUser = true;
 
         try {
-            // Tenta criar um usuário novo
+            // Tenta criar usuário novo
             userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, userForm.password);
-            // Se conseguir, atualiza o nome
             await updateProfile(userCredential.user, { displayName: userForm.name });
         } catch (createError) {
-            // Se o erro for "email já existe", tentamos logar para vincular à nova loja
+            // Se já existe, tenta vincular
             if (createError.code === 'auth/email-already-in-use') {
                 try {
-                    // Tenta logar com a senha fornecida no cadastro
                     userCredential = await signInWithEmailAndPassword(auth, cleanEmail, userForm.password);
-                    isNewUser = false; // Usuário já existia
+                    isNewUser = false; 
                 } catch (loginError) {
                     throw new Error("Este e-mail já possui uma conta, mas a senha informada não confere.");
                 }
             } else {
-                throw createError; // Se for outro erro, repassa
+                throw createError; 
             }
         }
 
         const user = userCredential.user;
 
-        // 2. Salva ou Atualiza o vínculo no Firestore da loja atual
-        // Regra de Negócio: Conta nasce "Sem Cargo" (role: 'pending')
+        // Salva vínculo no Firestore da loja atual
         await setDoc(doc(db, `artifacts/${shopId}/public/data/users/${user.uid}`), {
             name: userForm.name,
             email: cleanEmail,
             cpf: userForm.cpf,
             birthDate: userForm.birthDate,
             phone: userForm.phone,
-            role: 'pending', // <--- IMPORTANTE: Usuário nasce bloqueado nesta loja
+            role: 'pending', 
             createdAt: serverTimestamp(), 
             linkedAt: serverTimestamp() 
         });
 
-        // Se era usuário novo ou login forçado, fazemos logout para ele logar corretamente
         await signOut(auth);
         
         if (isNewUser) {
@@ -163,7 +156,6 @@ export default function Login() {
     e.preventDefault();
     setLoading(true); setError('');
 
-    // Validação básica de tamanho do documento
     if (companyForm.docOwner.replace(/\D/g, '').length < 11) {
         setLoading(false); return setError("CPF/CNPJ inválido (mínimo 11 números).");
     }
@@ -172,10 +164,9 @@ export default function Login() {
     }
 
     try {
-        // Envia solicitação para a coleção global de pedidos
         await addDoc(collection(db, 'company_requests'), {
             ...companyForm,
-            status: 'pending', // Aguardando você aprovar na Loja Principal
+            status: 'pending',
             requestDate: serverTimestamp()
         });
 
@@ -198,7 +189,7 @@ export default function Login() {
 
       <div className="bg-[#0a0a0a] max-w-md w-full p-8 rounded-2xl shadow-[0_0_50px_rgba(212,175,55,0.1)] border border-[#222] relative z-10 my-8">
         
-        {/* HEADER DA IDENTIDADE VISUAL */}
+        {/* HEADER */}
         <div className="text-center mb-6">
             <div className="inline-flex items-center justify-center p-3 rounded-full border border-[#D4AF37] mb-4 shadow-[0_0_15px_rgba(212,175,55,0.2)]">
                 <Scissors className="w-6 h-6 text-[#D4AF37]" />
@@ -209,7 +200,7 @@ export default function Login() {
             </p>
         </div>
 
-        {/* BOX DE ERRO */}
+        {/* ERRO */}
         {error && <div className="mb-4 bg-red-900/20 border border-red-900/50 p-3 rounded text-red-400 text-xs text-center">{error}</div>}
 
         {/* --- MODO 1: LOGIN --- */}
@@ -234,7 +225,7 @@ export default function Login() {
             </form>
         )}
 
-        {/* --- MODO 2: CADASTRO DE USUÁRIO (FUNCIONÁRIO) --- */}
+        {/* --- MODO 2: CADASTRO USUÁRIO --- */}
         {mode === 'registerUser' && (
             <form onSubmit={handleUserRegister} className="space-y-3 animate-fade-in">
                 <div className="flex items-center justify-between mb-4 pb-2 border-b border-[#222]">
@@ -252,7 +243,6 @@ export default function Login() {
                 <input className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee]" placeholder="Senha" type="password" value={userForm.password} onChange={e=>setUserForm({...userForm, password: e.target.value})} required />
                 <input className="input-field w-full bg-[#111] border border-[#222] rounded p-3 text-[#eee]" placeholder="Confirmar Senha" type="password" value={userForm.confirmPassword} onChange={e=>setUserForm({...userForm, confirmPassword: e.target.value})} required />
 
-                {/* NOVO: CHECKBOX TERMOS PARA USUÁRIOS */}
                 <div className="flex items-start gap-2 mt-2 bg-[#111] p-3 rounded border border-[#222]">
                     <input type="checkbox" id="termsUser" className="mt-1" checked={termsAccepted} onChange={e=>setTermsAccepted(e.target.checked)} />
                     <label htmlFor="termsUser" className="text-xs text-[#888] cursor-pointer select-none">
@@ -271,7 +261,7 @@ export default function Login() {
             </form>
         )}
 
-        {/* --- MODO 3: CADASTRO DE EMPRESA (PRÉ-CADASTRO) --- */}
+        {/* --- MODO 3: CADASTRO EMPRESA --- */}
         {mode === 'registerCompany' && (
             <form onSubmit={handleCompanyRegister} className="space-y-3 animate-fade-in">
                 <div className="flex items-center justify-between mb-4 pb-2 border-b border-[#222]">

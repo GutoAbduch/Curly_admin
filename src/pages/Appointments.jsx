@@ -31,7 +31,7 @@ const minutesToTime = (mins) => {
 export default function Appointments() {
   const { role, shopId } = useOutletContext();
   const APP_ID = shopId;
-  const userEmail = auth.currentUser?.email; // Para filtrar agenda individual
+  const userEmail = auth.currentUser?.email; 
 
   // Bloqueio Financeiro (Regra de Negócio)
   if (role === 'Financeiro') {
@@ -49,7 +49,7 @@ export default function Appointments() {
   const [appointments, setAppointments] = useState([]);
   const [servicesList, setServicesList] = useState([]);
   const [barbersList, setBarbersList] = useState([]);
-  const [stockList, setStockList] = useState([]); // Estoque completo para referência
+  const [stockList, setStockList] = useState([]); 
   const [storeSchedule, setStoreSchedule] = useState(null); 
   const [loading, setLoading] = useState(true);
 
@@ -62,7 +62,7 @@ export default function Appointments() {
   const [paymentMethod, setPaymentMethod] = useState('');
   const [tip, setTip] = useState(0);
   const [changeFor, setChangeFor] = useState('');
-  const [suppliesToDeduct, setSuppliesToDeduct] = useState([]); // Insumos a baixar
+  const [suppliesToDeduct, setSuppliesToDeduct] = useState([]); 
   const [saving, setSaving] = useState(false);
 
   // Formulário de Agendamento
@@ -93,22 +93,29 @@ export default function Appointments() {
         setServicesList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
-    // 3. Barbeiros (Com Lógica de Visualização Individual)
+    // 3. PROFISSIONAIS (ATUALIZADO PARA SUPORTAR 'COLABORADOR')
     const qUsers = query(collection(db, `artifacts/${APP_ID}/public/data/users`));
     const unsubUsers = onSnapshot(qUsers, (snap) => {
         let users = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        // Filtra quem é da operação
-        users = users.filter(u => ['Admin', 'Gerente', 'Barbeiro'].includes(u.role));
         
-        // REGRA DE VISUALIZAÇÃO: Se não for Admin/Gerente, vê apenas a si mesmo
-        if (!['Admin', 'Gerente'].includes(role)) {
+        // FILTRO 1: QUEM TEM COLUNA NA AGENDA?
+        // Admin, Gerente, Barbeiro e Colaborador (Quem atende)
+        // Recepção e Financeiro NÃO aparecem na grade de atendimento
+        users = users.filter(u => ['Admin', 'Gerente', 'Barbeiro', 'Colaborador'].includes(u.role));
+        
+        // FILTRO 2: QUEM PODE VER A AGENDA COMPLETA?
+        // Admin, Gerente e Recepção veem tudo.
+        // Colaboradores/Barbeiros veem apenas a própria coluna (Agenda Individual).
+        const canViewAll = ['Admin', 'Gerente', 'Recepção'].includes(role);
+
+        if (!canViewAll) {
              users = users.filter(u => u.email === userEmail);
         }
 
         setBarbersList(users);
     });
 
-    // 4. Estoque (Busca única para referência no modal)
+    // 4. Estoque
     const loadStock = async () => {
         const snap = await getDocs(query(collection(db, `artifacts/${APP_ID}/public/data/products`)));
         setStockList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -127,7 +134,7 @@ export default function Appointments() {
     loadConfig();
 
     return () => { unsubAppt(); unsubServ(); unsubUsers(); };
-  }, [selectedDate, APP_ID, role, userEmail]); // Adicionado dependências
+  }, [selectedDate, APP_ID, role, userEmail]); 
 
 
   // --- GERAÇÃO DA GRADE ---
@@ -175,10 +182,13 @@ export default function Appointments() {
           alert("Horário LOTADO! (Máximo 2 clientes: 1 Normal + 1 Encaixe)");
           return;
       }
+      // Usa customTitle se existir, senão usa o nome da role/email
+      const professionalName = barber.customTitle || barber.name || barber.email;
+
       setForm({
           clientName: '', clientPhone: '', clientEmail: '',
           serviceId: '', serviceName: '', price: 0,
-          barberId: barber.id, barberName: barber.name || barber.email,
+          barberId: barber.id, barberName: professionalName,
           date: selectedDate, time: time, duration: 30
       });
       setShowAddModal(true);
@@ -222,25 +232,23 @@ export default function Appointments() {
       }
   };
 
-  // --- CHECKOUT (LÓGICA DE BAIXA DE ESTOQUE ATUALIZADA) ---
+  // --- CHECKOUT ---
   const initiateFinish = (e, appt) => {
       e.stopPropagation(); 
       setFinishingAppt(appt);
       setPaymentMethod(''); setTip(0); setChangeFor(''); setSuppliesToDeduct([]);
       
-      // Carrega os insumos automaticamente do serviço cadastrado
       const service = servicesList.find(s => s.id === appt.serviceId);
       if (service && service.supplies) {
           const itemsToDeduct = [];
           service.supplies.forEach(item => {
-              // Verifica se o produto ainda existe na lista geral
               const prod = stockList.find(p => p.id === item.productId);
               if (prod) {
                   itemsToDeduct.push({
                       productId: prod.id,
                       name: prod.name,
                       unit: prod.measureUnit,
-                      qty: item.qty || '' // Já traz preenchido a quantidade padrão do serviço
+                      qty: item.qty || '' 
                   });
               }
           });
@@ -261,23 +269,22 @@ export default function Appointments() {
         const apptRef = doc(db, `artifacts/${APP_ID}/public/data/appointments`, finishingAppt.id);
         batch.update(apptRef, {
             status: 'completed', paymentMethod, paidAmount: finalTotal, tip: parseFloat(tip || 0),
-            finishedAt: serverTimestamp(), suppliesUsed: suppliesToDeduct // Salva histórico do que foi gasto
+            finishedAt: serverTimestamp(), suppliesUsed: suppliesToDeduct
         });
 
         // 2. Financeiro (Entrada)
         const financeRef = doc(collection(db, `artifacts/${APP_ID}/public/data/financial`));
         batch.set(financeRef, {
-            type: 'income', category: 'Serviço', description: `Corte: ${finishingAppt.clientName}`,
+            type: 'income', category: 'Serviço', description: `Serviço: ${finishingAppt.clientName}`,
             amount: finalTotal, date: selectedDate, barberId: finishingAppt.barberId,
             paymentMethod, createdAt: serverTimestamp(), user: 'Sistema'
         });
 
-        // 3. BAIXA DE ESTOQUE PEPS (FIFO) - COM 3 CASAS DECIMAIS
+        // 3. BAIXA DE ESTOQUE
         for (const item of suppliesToDeduct) {
             const qtyToRemove = parseFloat(item.qty);
             if (item.productId && qtyToRemove > 0) {
                 
-                // Busca Lotes Ativos
                 const batchesRef = collection(db, `artifacts/${APP_ID}/public/data/products/${item.productId}/batches`);
                 const qBatches = query(batchesRef, where('isActive', '==', true), orderBy('entryDate', 'asc'));
                 const snapshot = await getDocs(qBatches);
@@ -290,9 +297,8 @@ export default function Appointments() {
                     
                     const batchData = docSnap.data();
                     const take = Math.min(batchData.currentQuantity, remaining);
-                    const newQtd = Number((batchData.currentQuantity - take).toFixed(3)); // Força 3 casas
+                    const newQtd = Number((batchData.currentQuantity - take).toFixed(3));
                     
-                    // Atualiza Lote
                     const updateData = { currentQuantity: newQtd };
                     if (newQtd <= 0) updateData.isActive = false;
                     batch.update(docSnap.ref, updateData);
@@ -301,11 +307,9 @@ export default function Appointments() {
                     costOfGoodsSold += (take * batchData.unitCost);
                 });
 
-                // Atualiza Produto Principal
                 const productRef = doc(db, `artifacts/${APP_ID}/public/data/products`, item.productId);
                 batch.update(productRef, { currentStock: increment(-qtyToRemove) });
 
-                // Movimento de Saída
                 const moveRef = doc(collection(db, `artifacts/${APP_ID}/public/data/movements`));
                 batch.set(moveRef, {
                     productId: item.productId, 
@@ -330,7 +334,6 @@ export default function Appointments() {
       }
   };
 
-  // Render Cell Helper
   const renderCell = (slotInfo) => {
       if (slotInfo.count === 0) return <div className="w-full h-full"></div>;
       
@@ -401,12 +404,15 @@ export default function Appointments() {
       <div className="flex-1 overflow-auto border border-[#222] rounded-xl bg-[#050505] relative custom-scrollbar">
           {loading ? <div className="flex h-full items-center justify-center text-gray-500">Carregando...</div> : (
               <div className="min-w-[600px]">
-                  {/* Header Barbeiros */}
+                  {/* Header Profissionais */}
                   <div className="flex sticky top-0 z-20 bg-[#111] border-b border-[#333]">
                       <div className="w-14 flex-none border-r border-[#333] p-2 text-xs text-gray-500 text-center font-bold">Hora</div>
                       {barbersList.map(barber => (
                           <div key={barber.id} className="flex-1 p-2 text-center border-r border-[#333] min-w-[140px]">
-                              <span className="text-gold font-bold text-sm block truncate">{barber.name}</span>
+                              {/* Mostra Título Customizado (Ex: Manicure) ou Nome */}
+                              <span className="text-gold font-bold text-sm block truncate">
+                                  {barber.customTitle || barber.name}
+                              </span>
                           </div>
                       ))}
                   </div>
@@ -437,13 +443,13 @@ export default function Appointments() {
           )}
       </div>
 
-      {/* MODAL ADD (COM CAMPOS OBRIGATÓRIOS) */}
+      {/* MODAL ADD */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
             <div className="bg-[#0a0a0a] w-full max-w-sm rounded-2xl border border-[#333] shadow-2xl p-6">
                 <h2 className="text-lg font-bold text-gold mb-4">Novo Agendamento</h2>
                 <div className="mb-4 p-3 bg-[#111] rounded border border-[#222]">
-                    <p className="text-xs text-gray-400">Barbeiro: <span className="text-white">{form.barberName}</span></p>
+                    <p className="text-xs text-gray-400">Profissional: <span className="text-white">{form.barberName}</span></p>
                     <p className="text-xs text-gray-400">Horário: <span className="text-white">{form.time}</span></p>
                 </div>
                 <form onSubmit={handleSave} className="space-y-3">
@@ -517,7 +523,6 @@ export default function Appointments() {
                           <input type="number" className="input-field mt-1" placeholder="R$ 0,00" value={tip || ''} onChange={e => setTip(e.target.value)} />
                       </div>
 
-                      {/* CONFERÊNCIA DE INSUMOS (3 CASAS DECIMAIS) */}
                       <div className="bg-[#0a0a0a] p-3 rounded border border-[#222]">
                           <p className="text-xs font-bold text-gray-500 uppercase mb-2">Conferir Insumos (Baixa Estoque)</p>
                           {suppliesToDeduct.map((item, idx) => (

@@ -1,16 +1,33 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, auth } from '../config/firebase';
 import { collection, query, where, getDocs, orderBy, addDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
-import { useOutletContext } from 'react-router-dom';
+// ADICIONADO: useNavigate para redirecionar e canAccess para checar o plano
+import { useOutletContext, useNavigate } from 'react-router-dom';
+import { canAccess } from '../config/plans'; 
 
 const formatCurrency = (val) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
 
 export default function Finance() {
-  const { role, shopId } = useOutletContext();
+  // ADICIONADO: storePlan para verificar o plano
+  const { role, shopId, storePlan } = useOutletContext();
+  const navigate = useNavigate();
   const APP_ID = shopId;
   
-  // Segurança
-  if (!['Admin', 'Financeiro'].includes(role)) return <div className="p-10 text-center text-red-500">Acesso Restrito</div>;
+  // --- TRAVA DE SEGURANÇA (NOVO) ---
+  // Se o plano for Starter, chuta o usuário para a Agenda
+  useEffect(() => {
+    if (storePlan && !canAccess(storePlan, 'finance')) {
+        alert("Seu plano atual não permite acesso ao Financeiro.");
+        navigate(`/${shopId}/admin/appointments`);
+    }
+  }, [storePlan, shopId, navigate]);
+
+  // Se não tiver acesso, não renderiza nada (evita piscada de tela)
+  if (!canAccess(storePlan, 'finance')) return null;
+  // ----------------------------------
+
+  // Segurança de Role (Mantida do seu código)
+  if (!['Admin', 'Financeiro', 'Gerente'].includes(role)) return <div className="p-10 text-center text-red-500">Acesso Restrito</div>;
 
   // --- DATAS E ESTADOS ---
   const date = new Date();
