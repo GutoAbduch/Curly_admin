@@ -4,6 +4,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 // --- LAYOUTS ---
 import AdminLayout from './layouts/AdminLayout';
 import ClientLayout from './layouts/ClientLayout';
+import BookingWizard from './pages/client/BookingWizard';
 
 // --- PÁGINAS ADMIN (Gestão) ---
 import Login from './pages/Login';
@@ -17,6 +18,7 @@ import SuperAdmin from './pages/SuperAdmin';
 
 // --- PÁGINAS CLIENTE (Público) ---
 import ClientHome from './pages/client/ClientHome';
+import MarketplaceHome from './pages/client/MarketplaceHome'; // NOVA IMPORTAÇÃO
 
 // Função para detectar se estamos no ambiente ADMIN
 const isAdminDomain = () => {
@@ -63,11 +65,8 @@ function App() {
             CENÁRIO 2: AMBIENTE CLIENTE / MARKETPLACE (curlyclients.com)
            ======================================================= */
           <>
-             {/* ROTA RAIZ (Marketplace Home): 
-                Na Fase 2, aqui entrará a busca e categorias.
-                Por enquanto, redireciona para a loja 'abduch' para testarmos o layout do cliente.
-             */}
-             <Route path="/" element={<Navigate to="/abduch" replace />} />
+             {/* ROTA RAIZ: Agora mostra a HOME DO MARKETPLACE */}
+             <Route path="/" element={<MarketplaceHome />} />
              
              {/* Futura rota de Categorias */}
              <Route path="/categorias" element={<div className="p-10 text-white">Listagem de Categorias (Em Breve)</div>} />

@@ -4,7 +4,8 @@ import { doc, getDoc, setDoc, query, collection, where, getDocs } from 'firebase
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useOutletContext } from 'react-router-dom';
 import { PLAN_LIMITS } from '../config/plans'; 
-import { CheckCircle, Crown, Lock, Star, CreditCard } from 'lucide-react'; // Ícones adicionados
+import { BUSINESS_CATEGORIES } from '../config/categories'; 
+import { CheckCircle, Crown, Lock, Star, CreditCard, Tag, Globe } from 'lucide-react'; 
 
 export default function Store() {
   const { role, shopId } = useOutletContext();
@@ -21,7 +22,7 @@ export default function Store() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedPlanForPayment, setSelectedPlanForPayment] = useState(null);
 
-  // ESTADO INICIAL (Visual enquanto carrega)
+  // ESTADO INICIAL 
   const [schedule, setSchedule] = useState([
       { day: 0, label: 'Domingo', open: '09:00', close: '14:00', closed: true },
       { day: 1, label: 'Segunda', open: '09:00', close: '20:00', closed: false },
@@ -38,6 +39,12 @@ export default function Store() {
   
   const [branding, setBranding] = useState({ 
     logoUrl: '', bannerUrl: '', primaryColor: '#D4AF37', secondaryColor: '#000000', slogan: '' 
+  });
+
+  const [categorySettings, setCategorySettings] = useState({
+    slug: '', 
+    mainCategory: '', 
+    subcategories: [] 
   });
 
   // Validação de Acesso
@@ -77,6 +84,12 @@ export default function Store() {
             }
             if(data.info) setInfo(data.info);
             if(data.branding) setBranding(data.branding);
+            
+            if(data.categorySettings) {
+                setCategorySettings(data.categorySettings);
+            } else {
+                setCategorySettings(prev => ({ ...prev, slug: shopId }));
+            }
         }
     } catch (err) { 
         console.error("Erro ao carregar:", err); 
@@ -107,18 +120,46 @@ export default function Store() {
       }
   };
 
+  // --- NOVA FUNÇÃO DE SALVAR (CRIA O ÍNDICE PÚBLICO) ---
   const saveAllSettings = async (e) => {
       e.preventDefault();
+      
+      const cleanSlug = categorySettings.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+      
       try {
+          // 1. Salva Configuração Interna (Completa)
           const docRef = doc(db, `artifacts/${shopId}/public/data/store_settings/full_config`);
           await setDoc(docRef, { 
               schedule,
               info,
               branding,
+              categorySettings: {
+                  ...categorySettings,
+                  slug: cleanSlug
+              },
               updatedAt: new Date()
           }, { merge: true });
 
-          alert("Configurações e Horários salvos com sucesso!");
+          // 2. Salva/Atualiza o Índice Público da Loja (Resumido para o Marketplace)
+          // Isso permite que a loja apareça na busca global
+          const publicShopRef = doc(db, "shops", shopId);
+          await setDoc(publicShopRef, {
+              shopId: shopId,
+              slug: cleanSlug,
+              name: info.name || shopId, // Nome oficial ou ID se vazio
+              logoUrl: branding.logoUrl || '',
+              bannerUrl: branding.bannerUrl || '',
+              mainCategory: categorySettings.mainCategory || 'outros',
+              subcategories: categorySettings.subcategories || [],
+              rating: 5.0, // Inicialmente 5.0 (depois implementaremos cálculo real)
+              reviewCount: 0,
+              city: info.address ? info.address.split(',').pop().trim() : 'Brasil', // Tenta pegar a cidade (simples)
+              updatedAt: new Date()
+          }, { merge: true });
+
+          setCategorySettings(prev => ({ ...prev, slug: cleanSlug }));
+
+          alert("Configurações salvas e Loja atualizada no Marketplace!");
       } catch (error) {
           console.error(error);
           alert("Erro ao salvar: " + error.message);
@@ -129,6 +170,17 @@ export default function Store() {
       const newSchedule = [...schedule];
       newSchedule[index] = { ...newSchedule[index], [field]: value };
       setSchedule(newSchedule);
+  };
+
+  const toggleSubcategory = (sub) => {
+    setCategorySettings(prev => {
+        const exists = prev.subcategories.includes(sub);
+        if (exists) {
+            return { ...prev, subcategories: prev.subcategories.filter(s => s !== sub) };
+        } else {
+            return { ...prev, subcategories: [...prev.subcategories, sub] };
+        }
+    });
   };
 
   const handleEmergency = async () => {
@@ -144,6 +196,8 @@ export default function Store() {
       window.open(`mailto:?bcc=${Array.from(emails).join(',')}&subject=Aviso Importante&body=Prezados clientes...`);
   };
 
+  const selectedCategoryObj = BUSINESS_CATEGORIES.find(c => c.id === categorySettings.mainCategory);
+
   if(loading) return <div className="text-center text-[#666] py-10">Carregando loja...</div>;
 
   return (
@@ -158,9 +212,9 @@ export default function Store() {
         <div className="flex bg-[#111] p-1 rounded-xl overflow-x-auto">
             {[
                 {id: 'visual', icon: 'fas fa-paint-brush', label: 'Visual'},
-                {id: 'infos', icon: 'fas fa-info-circle', label: 'Infos'},
+                {id: 'infos', icon: 'fas fa-info-circle', label: 'Infos & Categoria'},
                 {id: 'hours', icon: 'fas fa-clock', label: 'Horários'},
-                {id: 'plans', icon: 'fas fa-gem', label: 'Assinatura'}, // NOVA ABA
+                {id: 'plans', icon: 'fas fa-gem', label: 'Assinatura'}, 
                 {id: 'danger', icon: 'fas fa-exclamation-triangle', label: 'Emergência'}
             ].map(tab => (
                 <button 
@@ -176,7 +230,7 @@ export default function Store() {
 
       <div className="bg-[#0a0a0a] p-6 rounded-2xl shadow-sm border border-[#222]">
         
-        {/* === ABA 1: VISUAL (Com Banner e Preview) === */}
+        {/* === ABA 1: VISUAL === */}
         {activeTab === 'visual' && (
             <div className="space-y-8 animate-fade-in">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -254,15 +308,96 @@ export default function Store() {
             </div>
         )}
 
-        {/* === ABA 2: INFOS === */}
+        {/* === ABA 2: INFOS & CATEGORIA === */}
         {activeTab === 'infos' && (
-            <div className="space-y-4 animate-fade-in">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div><label className="lbl">Nome da Barbearia</label><input className="input-field" value={info.name} onChange={e => setInfo({...info, name: e.target.value})} /></div>
-                    <div><label className="lbl">Telefone / WhatsApp</label><input className="input-field" value={info.phone} onChange={e => setInfo({...info, phone: e.target.value})} /></div>
-                    <div className="md:col-span-2"><label className="lbl">Endereço</label><input className="input-field" value={info.address} onChange={e => setInfo({...info, address: e.target.value})} /></div>
-                    <div><label className="lbl">Instagram (URL)</label><input className="input-field" value={info.instagram} onChange={e => setInfo({...info, instagram: e.target.value})} /></div>
-                    <div><label className="lbl">Google Maps (URL)</label><input className="input-field" value={info.mapUrl} onChange={e => setInfo({...info, mapUrl: e.target.value})} /></div>
+            <div className="space-y-8 animate-fade-in">
+                
+                {/* CONFIGURAÇÃO DE MARKETPLACE */}
+                <div className="border border-[#333] bg-[#111] rounded-xl p-6 relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-1 h-full bg-gold"></div>
+                    <div className="mb-6">
+                        <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                            <Tag className="w-5 h-5 text-gold" /> 
+                            Classificação no Marketplace
+                        </h3>
+                        <p className="text-xs text-[#666]">
+                            Defina corretamente para aparecer nas buscas do <strong>Curly Clients</strong>.
+                        </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        
+                        <div className="md:col-span-2">
+                            <label className="lbl flex items-center gap-2">
+                                <Globe className="w-3 h-3" /> Link Personalizado da Loja (Slug)
+                            </label>
+                            <div className="flex items-center">
+                                <span className="bg-[#222] text-[#666] px-3 py-3 rounded-l text-sm border border-[#333] border-r-0">
+                                    curlyclients.com/
+                                </span>
+                                <input 
+                                    className="input-field rounded-l-none" 
+                                    value={categorySettings.slug} 
+                                    onChange={e => setCategorySettings({...categorySettings, slug: e.target.value.toLowerCase().replace(/\s/g, '-')})}
+                                    placeholder="minha-loja"
+                                />
+                            </div>
+                            <p className="text-[9px] text-[#555] mt-1">Este será o link para seus clientes acessarem sua loja direto.</p>
+                        </div>
+
+                        <div>
+                            <label className="lbl">Categoria Principal (Apenas uma)</label>
+                            <select 
+                                className="input-field w-full bg-[#0a0a0a] border border-[#333] rounded p-3 text-white focus:border-gold outline-none"
+                                value={categorySettings.mainCategory}
+                                onChange={e => setCategorySettings({ 
+                                    ...categorySettings, 
+                                    mainCategory: e.target.value,
+                                    subcategories: [] 
+                                })}
+                            >
+                                <option value="">Selecione uma Categoria...</option>
+                                {BUSINESS_CATEGORIES.map(cat => (
+                                    <option key={cat.id} value={cat.id}>{cat.label}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className={`transition-opacity ${categorySettings.mainCategory ? 'opacity-100' : 'opacity-30 pointer-events-none'}`}>
+                            <label className="lbl mb-2">Especialidades (Selecione todas que se aplicam)</label>
+                            <div className="bg-[#0a0a0a] border border-[#333] rounded p-3 h-40 overflow-y-auto custom-scrollbar">
+                                {selectedCategoryObj ? (
+                                    <div className="space-y-2">
+                                        {selectedCategoryObj.subcategories.map((sub, idx) => (
+                                            <label key={idx} className="flex items-center gap-3 cursor-pointer group hover:bg-[#1a1a1a] p-1 rounded">
+                                                <input 
+                                                    type="checkbox" 
+                                                    className="accent-gold w-4 h-4"
+                                                    checked={categorySettings.subcategories.includes(sub)}
+                                                    onChange={() => toggleSubcategory(sub)}
+                                                />
+                                                <span className="text-sm text-[#ccc] group-hover:text-white">{sub}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p className="text-xs text-[#444] text-center pt-10">Selecione uma categoria principal primeiro.</p>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* DADOS DE CONTATO */}
+                <div className="space-y-4 pt-4 border-t border-[#222]">
+                    <h3 className="text-sm font-bold text-[#eee] uppercase">Dados de Contato</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div><label className="lbl">Nome da Barbearia</label><input className="input-field" value={info.name} onChange={e => setInfo({...info, name: e.target.value})} /></div>
+                        <div><label className="lbl">Telefone / WhatsApp</label><input className="input-field" value={info.phone} onChange={e => setInfo({...info, phone: e.target.value})} /></div>
+                        <div className="md:col-span-2"><label className="lbl">Endereço</label><input className="input-field" value={info.address} onChange={e => setInfo({...info, address: e.target.value})} /></div>
+                        <div><label className="lbl">Instagram (URL)</label><input className="input-field" value={info.instagram} onChange={e => setInfo({...info, instagram: e.target.value})} /></div>
+                        <div><label className="lbl">Google Maps (URL)</label><input className="input-field" value={info.mapUrl} onChange={e => setInfo({...info, mapUrl: e.target.value})} /></div>
+                    </div>
                 </div>
             </div>
         )}
@@ -293,7 +428,7 @@ export default function Store() {
             </div>
         )}
 
-        {/* === NOVIDADE: ABA 4: PLANOS/ASSINATURA === */}
+        {/* === ABA 4: PLANOS === */}
         {activeTab === 'plans' && (
             <div className="animate-fade-in">
                 <div className="text-center mb-8">
@@ -396,7 +531,7 @@ export default function Store() {
 
       </div>
       
-      {/* MODAL DE PAGAMENTO (SIMULAÇÃO) */}
+      {/* MODAL DE PAGAMENTO */}
       {showPaymentModal && (
           <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
               <div className="bg-[#111] p-6 rounded-xl border border-[#333] w-full max-w-md shadow-2xl relative animate-fade-in">

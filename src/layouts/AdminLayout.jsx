@@ -88,7 +88,7 @@ export default function AdminLayout() {
 
   return (
     <div className="flex min-h-screen bg-black">
-      {/* Passamos as configs globais para o Sidebar usar no botão Fale Conosco */}
+      {/* Passei as configs globais para o Sidebar usar no botão Fale Conosco */}
       <Sidebar 
           userRole={role} 
           shopId={shopId} 
