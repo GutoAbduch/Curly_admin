@@ -1,17 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { db } from '../../config/firebase';
-import { collection, getDocs, query, where } from 'firebase/firestore';
-import { Calendar, Clock, User, Scissors, ChevronLeft, ChevronRight, CheckCircle } from 'lucide-react';
+import { collection, getDocs, addDoc, serverTimestamp } from 'firebase/firestore'; 
+import { Calendar, Clock, User, Scissors, ChevronLeft, CheckCircle, AlertCircle, Phone, Mail, User as UserIcon } from 'lucide-react';
 
 export default function BookingWizard() {
   const { storeConfig, shopId } = useOutletContext();
-  const navigate = useNavigate();
   const primaryColor = storeConfig?.primaryColor || '#D4AF37';
 
-  // ESTADOS DO AGENDAMENTO
+  // ESTADOS DO FLUXO
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   
   // DADOS DO BANCO
   const [services, setServices] = useState([]);
@@ -23,20 +23,33 @@ export default function BookingWizard() {
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedTime, setSelectedTime] = useState('');
 
-  // CARREGAR DADOS DA LOJA
+  // DADOS DO CLIENTE
+  const [clientData, setClientData] = useState({ name: '', phone: '', email: '' });
+
+  // CARREGAR DADOS INICIAIS (COM FILTRO NOVO)
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // 1. Buscar Serviços
+        // 1. Serviços
         const servicesRef = collection(db, `artifacts/${shopId}/public/data/services`);
         const sSnap = await getDocs(servicesRef);
         setServices(sSnap.docs.map(d => ({ id: d.id, ...d.data() })));
 
-        // 2. Buscar Profissionais (Apenas 'Barber' ou 'Gerente' que atendem)
+        // 2. Profissionais (ATUALIZADO: FILTRO DE CARGOS)
         const usersRef = collection(db, `artifacts/${shopId}/public/data/users`);
-        // Idealmente filtraríamos por role, mas vamos pegar todos por enquanto
         const uSnap = await getDocs(usersRef);
-        setProfessionals(uSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        
+        const validPros = uSnap.docs
+            .map(d => ({ id: d.id, ...d.data() }))
+            .filter(u => {
+                // Filtra quem não tem nome e quem é de cargos administrativos
+                const role = u.role || '';
+                // Lista de cargos que NÃO devem aparecer na agenda
+                const ignoredRoles = ['Financeiro', 'Recepcionista', 'Admin']; 
+                return u.name && !ignoredRoles.includes(role);
+            });
+
+        setProfessionals(validPros);
 
       } catch (error) {
         console.error("Erro ao carregar dados:", error);
@@ -47,210 +60,354 @@ export default function BookingWizard() {
     fetchData();
   }, [shopId]);
 
-  // GERAÇÃO DE HORÁRIOS (SIMPLES POR ENQUANTO)
-  const generateTimeSlots = () => {
+  // LÓGICA DE HORÁRIOS (MANTIDA IDÊNTICA)
+  const generateTimeSlots = (dateString) => {
+    if (!storeConfig || !storeConfig.schedule) return [];
+    const date = new Date(dateString + 'T00:00:00'); 
+    const dayIndex = date.getDay();
+    const dayRule = storeConfig.schedule.find(s => s.day === dayIndex);
+
+    if (!dayRule || dayRule.closed) return []; 
+
     const slots = [];
-    let start = 9; // 09:00
-    const end = 19; // 19:00
-    for (let i = start; i < end; i++) {
-        slots.push(`${i < 10 ? '0'+i : i}:00`);
-        slots.push(`${i < 10 ? '0'+i : i}:30`);
+    const toMinutes = (time) => {
+        const [h, m] = time.split(':').map(Number);
+        return h * 60 + m;
+    };
+    const toString = (minutes) => {
+        const h = Math.floor(minutes / 60);
+        const m = minutes % 60;
+        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+    };
+
+    let current = toMinutes(dayRule.open);
+    const end = toMinutes(dayRule.close);
+    const interval = 30; 
+
+    while (current < end) {
+        slots.push(toString(current));
+        current += interval;
     }
     return slots;
   };
 
-  // --- RENDERIZAÇÃO DOS PASSOS ---
+  const availableSlots = selectedDate ? generateTimeSlots(selectedDate) : [];
 
-  // PASSO 1: ESCOLHER SERVIÇO
+  // SALVAR NO FIREBASE (MANTIDA IDÊNTICA)
+  const handleFinishBooking = async (e) => {
+      e.preventDefault();
+      if(!clientData.name || !clientData.phone) return alert("Por favor, preencha nome e telefone.");
+
+      setSaving(true);
+      try {
+          await addDoc(collection(db, `artifacts/${shopId}/public/data/appointments`), {
+              serviceId: selectedService.id,
+              serviceName: selectedService.name,
+              servicePrice: selectedService.price,
+              serviceDuration: selectedService.duration,
+              professionalId: selectedProfessional === 'any' ? null : selectedProfessional.id,
+              professionalName: selectedProfessional === 'any' ? 'Primeiro Disponível' : selectedProfessional.name,
+              date: selectedDate,
+              time: selectedTime,
+              clientName: clientData.name,
+              clientPhone: clientData.phone,
+              clientEmail: clientData.email,
+              status: 'pending',
+              createdAt: serverTimestamp()
+          });
+          setStep(6);
+      } catch (error) {
+          console.error("Erro ao agendar:", error);
+          alert("Erro ao finalizar agendamento.");
+      } finally {
+          setSaving(false);
+      }
+  };
+
+  // --- RENDERS (VISUAL NOVO: CLARO & LUXO) ---
+
   const renderServices = () => (
     <div className="space-y-4 animate-fade-in">
-        <h2 className="text-xl font-bold text-white mb-6">O que vamos fazer hoje?</h2>
+        <h2 className="text-xl font-bold text-[#1a1a1a] mb-6 font-egyptian">Selecione o Serviço</h2>
         <div className="grid grid-cols-1 gap-3">
             {services.length === 0 ? (
-                <p className="text-gray-500">Nenhum serviço cadastrado nesta loja.</p>
+                <p className="text-gray-500">Nenhum serviço disponível.</p>
             ) : services.map(srv => (
                 <div 
                     key={srv.id} 
                     onClick={() => { setSelectedService(srv); setStep(2); }}
-                    className="bg-[#111] border border-[#222] p-4 rounded-xl flex justify-between items-center cursor-pointer hover:border-[#D4AF37] hover:bg-[#161616] transition group"
+                    className="bg-white border border-[#eee] p-4 rounded-xl flex justify-between items-center cursor-pointer hover:border-[--primary] hover:shadow-md transition group"
                     style={{ borderColor: selectedService?.id === srv.id ? primaryColor : '' }}
                 >
                     <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-full bg-[#0a0a0a] flex items-center justify-center text-[#666] group-hover:text-white transition">
+                        <div className="w-10 h-10 rounded-full bg-[#f9f9f9] flex items-center justify-center text-[#888] group-hover:text-[--primary] transition">
                             <Scissors className="w-5 h-5" />
                         </div>
                         <div>
-                            <h3 className="font-bold text-white">{srv.name}</h3>
-                            <p className="text-xs text-[#666]">{srv.duration} min • {srv.description || 'Sem descrição'}</p>
+                            <h3 className="font-bold text-[#1a1a1a]">{srv.name}</h3>
+                            <p className="text-xs text-[#666]">{srv.duration} min • R$ {srv.price}</p>
                         </div>
                     </div>
-                    <span className="font-bold text-white">R$ {srv.price}</span>
+                    <div className="w-5 h-5 rounded-full border border-[#ddd] flex items-center justify-center">
+                        {selectedService?.id === srv.id && <div className="w-3 h-3 rounded-full" style={{ backgroundColor: primaryColor }} />}
+                    </div>
                 </div>
             ))}
         </div>
     </div>
   );
 
-  // PASSO 2: ESCOLHER PROFISSIONAL
   const renderProfessionals = () => (
     <div className="space-y-4 animate-fade-in">
-        <h2 className="text-xl font-bold text-white mb-6">Quem vai te atender?</h2>
+        <h2 className="text-xl font-bold text-[#1a1a1a] mb-6 font-egyptian">Escolha o Profissional</h2>
         <div className="grid grid-cols-2 gap-4">
             <div 
                 onClick={() => { setSelectedProfessional('any'); setStep(3); }}
-                className="bg-[#111] border border-[#222] p-6 rounded-xl flex flex-col items-center justify-center gap-3 cursor-pointer hover:border-[#D4AF37] transition text-center"
+                className={`bg-white border p-6 rounded-xl flex flex-col items-center gap-3 cursor-pointer transition hover:shadow-lg ${selectedProfessional === 'any' ? 'border-[--primary] ring-1 ring-[--primary]' : 'border-[#eee] hover:border-[#ccc]'}`}
             >
-                <div className="w-16 h-16 rounded-full bg-[#222] flex items-center justify-center border border-[#333]">
-                    <Clock className="w-6 h-6 text-white" />
+                <div className="w-14 h-14 rounded-full bg-[#f5f5f5] flex items-center justify-center text-[#888]">
+                    <Clock className="w-6 h-6" />
                 </div>
-                <h3 className="font-bold text-white text-sm">Primeiro Disponível</h3>
+                <h3 className="font-bold text-[#1a1a1a] text-sm text-center">Primeiro Disponível</h3>
             </div>
 
             {professionals.map(pro => (
                 <div 
                     key={pro.id} 
                     onClick={() => { setSelectedProfessional(pro); setStep(3); }}
-                    className="bg-[#111] border border-[#222] p-6 rounded-xl flex flex-col items-center justify-center gap-3 cursor-pointer hover:border-[#D4AF37] transition text-center"
+                    className={`bg-white border p-6 rounded-xl flex flex-col items-center gap-3 cursor-pointer transition hover:shadow-lg ${selectedProfessional?.id === pro.id ? 'border-[--primary] ring-1 ring-[--primary]' : 'border-[#eee] hover:border-[#ccc]'}`}
                 >
-                    <div className="w-16 h-16 rounded-full bg-[#222] flex items-center justify-center border border-[#333] overflow-hidden">
+                    <div className="w-14 h-14 rounded-full bg-[#f5f5f5] overflow-hidden border border-[#eee]">
                         {pro.photoUrl ? (
                             <img src={pro.photoUrl} className="w-full h-full object-cover" alt={pro.name} />
                         ) : (
-                            <User className="w-6 h-6 text-[#666]" />
+                            <div className="w-full h-full flex items-center justify-center"><User className="w-6 h-6 text-[#ccc]" /></div>
                         )}
                     </div>
-                    <div>
-                        <h3 className="font-bold text-white text-sm">{pro.name}</h3>
-                        <p className="text-[10px] text-[#666]">Profissional</p>
-                    </div>
+                    <h3 className="font-bold text-[#1a1a1a] text-sm text-center">{pro.name}</h3>
                 </div>
             ))}
         </div>
     </div>
   );
 
-  // PASSO 3: DATA E HORA
   const renderDateTime = () => (
     <div className="space-y-6 animate-fade-in">
-        <h2 className="text-xl font-bold text-white">Quando seria melhor?</h2>
-        
-        {/* DATA */}
+        <h2 className="text-xl font-bold text-[#1a1a1a] font-egyptian">Escolha o Horário</h2>
         <div>
-            <label className="text-xs font-bold text-[#666] uppercase mb-2 block">Data</label>
+            <label className="text-xs font-bold text-[#888] uppercase mb-2 block">Data</label>
             <input 
                 type="date" 
-                className="w-full bg-[#111] border border-[#333] text-white p-3 rounded-xl outline-none focus:border-[#D4AF37]"
+                className="w-full bg-white border border-[#ddd] text-[#1a1a1a] p-3 rounded-xl outline-none focus:border-[--primary] appearance-none shadow-sm"
                 min={new Date().toISOString().split('T')[0]}
                 value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
+                onChange={(e) => { setSelectedDate(e.target.value); setSelectedTime(''); }}
             />
         </div>
-
-        {/* HORÁRIOS (Grid) */}
         {selectedDate && (
             <div>
-                <label className="text-xs font-bold text-[#666] uppercase mb-2 block">Horários Disponíveis</label>
-                <div className="grid grid-cols-4 gap-2 max-h-60 overflow-y-auto custom-scrollbar">
-                    {generateTimeSlots().map(time => (
-                        <button
-                            key={time}
-                            onClick={() => setSelectedTime(time)}
-                            className={`py-2 rounded-lg text-xs font-bold border transition ${
-                                selectedTime === time 
-                                ? 'bg-white text-black border-white' 
-                                : 'bg-[#111] text-[#ccc] border-[#222] hover:border-[#666]'
-                            }`}
-                        >
-                            {time}
-                        </button>
-                    ))}
-                </div>
+                <label className="text-xs font-bold text-[#888] uppercase mb-2 block">
+                    Horários para {new Date(selectedDate + 'T00:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
+                </label>
+                {availableSlots.length > 0 ? (
+                    <div className="grid grid-cols-4 gap-2 max-h-60 overflow-y-auto custom-scrollbar pr-2">
+                        {availableSlots.map(time => (
+                            <button
+                                key={time}
+                                onClick={() => setSelectedTime(time)}
+                                className={`py-2 rounded-lg text-xs font-bold border transition ${
+                                    selectedTime === time 
+                                    ? 'text-white shadow-md' 
+                                    : 'bg-white text-[#555] border-[#eee] hover:border-[#ccc]'
+                                }`}
+                                style={selectedTime === time ? { backgroundColor: primaryColor, borderColor: primaryColor } : {}}
+                            >
+                                {time}
+                            </button>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="bg-red-50 border border-red-100 p-4 rounded-xl flex items-center gap-3 text-red-500">
+                        <AlertCircle className="w-5 h-5" />
+                        <span className="text-sm font-bold">Fechado nesta data.</span>
+                    </div>
+                )}
             </div>
         )}
-        
         {selectedDate && selectedTime && (
             <button 
                 onClick={() => setStep(4)}
-                className="w-full py-4 rounded-xl font-bold text-black mt-4 shadow-lg hover:brightness-110 transition"
+                className="w-full py-4 rounded-xl font-bold text-white mt-6 shadow-lg hover:-translate-y-1 transition uppercase tracking-widest"
                 style={{ backgroundColor: primaryColor }}
             >
-                CONTINUAR
+                Continuar
             </button>
         )}
     </div>
   );
 
-  // PASSO 4: RESUMO (LOGIN VEM DEPOIS)
   const renderSummary = () => (
-      <div className="space-y-6 animate-fade-in text-center">
-          <div className="w-20 h-20 bg-green-900/20 rounded-full flex items-center justify-center mx-auto border border-green-900/50">
-              <CheckCircle className="w-10 h-10 text-green-500" />
-          </div>
-          
-          <div>
-              <h2 className="text-2xl font-bold text-white">Quase lá!</h2>
-              <p className="text-gray-400 text-sm">Confira os detalhes do agendamento.</p>
+      <div className="space-y-6 animate-fade-in">
+          <div className="text-center space-y-2">
+             <h2 className="text-2xl font-bold text-[#1a1a1a] font-egyptian">Resumo</h2>
+             <p className="text-[#666] text-sm">Confira os detalhes.</p>
           </div>
 
-          <div className="bg-[#111] border border-[#222] rounded-xl p-6 text-left space-y-4">
-              <div className="flex justify-between border-b border-[#222] pb-2">
-                  <span className="text-gray-500 text-xs uppercase font-bold">Serviço</span>
-                  <span className="text-white font-bold text-sm">{selectedService?.name}</span>
+          <div className="bg-white border border-[#eee] rounded-xl p-6 space-y-4 shadow-sm relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-1 h-full" style={{ backgroundColor: primaryColor }}></div>
+              
+              <div className="flex justify-between items-center border-b border-[#f5f5f5] pb-3">
+                  <div>
+                      <p className="text-[10px] text-[#888] uppercase font-bold">Serviço</p>
+                      <p className="text-[#1a1a1a] font-bold">{selectedService?.name}</p>
+                  </div>
+                  <p className="text-[#1a1a1a] font-bold">R$ {selectedService?.price}</p>
               </div>
-              <div className="flex justify-between border-b border-[#222] pb-2">
-                  <span className="text-gray-500 text-xs uppercase font-bold">Profissional</span>
-                  <span className="text-white font-bold text-sm">
-                      {selectedProfessional === 'any' ? 'Primeiro Disponível' : selectedProfessional?.name}
-                  </span>
+
+              <div className="flex justify-between items-center border-b border-[#f5f5f5] pb-3">
+                  <div>
+                      <p className="text-[10px] text-[#888] uppercase font-bold">Profissional</p>
+                      <p className="text-[#1a1a1a] font-bold">
+                          {selectedProfessional === 'any' ? 'Primeiro Disponível' : selectedProfessional?.name}
+                      </p>
+                  </div>
               </div>
-              <div className="flex justify-between border-b border-[#222] pb-2">
-                  <span className="text-gray-500 text-xs uppercase font-bold">Data & Hora</span>
-                  <span className="text-white font-bold text-sm">{selectedDate.split('-').reverse().join('/')} às {selectedTime}</span>
-              </div>
-              <div className="flex justify-between pt-2">
-                  <span className="text-gray-500 text-xs uppercase font-bold">Valor Total</span>
-                  <span className="text-[#D4AF37] font-bold text-lg">R$ {selectedService?.price}</span>
+
+              <div className="flex justify-between items-center">
+                  <div>
+                      <p className="text-[10px] text-[#888] uppercase font-bold">Data & Hora</p>
+                      <p className="text-[#1a1a1a] font-bold capitalize">
+                          {new Date(selectedDate + 'T00:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: 'numeric', month: 'short' })} • {selectedTime}
+                      </p>
+                  </div>
               </div>
           </div>
 
           <button 
-              onClick={() => alert("AQUI ENTRARÁ O LOGIN/CADASTRO DO CLIENTE (PRÓXIMO PASSO DO ROADMAP)")}
-              className="w-full py-4 rounded-xl font-bold text-black shadow-lg hover:brightness-110 transition"
+              onClick={() => setStep(5)} 
+              className="w-full py-4 rounded-xl font-bold text-white shadow-lg hover:-translate-y-1 transition uppercase tracking-widest mt-4"
               style={{ backgroundColor: primaryColor }}
           >
-              CONFIRMAR AGENDAMENTO
+              Continuar para Identificação
           </button>
       </div>
   );
 
-  if(loading) return <div className="p-10 text-center text-white">Carregando opções...</div>;
-
-  return (
-    <div className="max-w-xl mx-auto px-6 py-8 min-h-[80vh]">
-        
-        {/* BARRA DE PROGRESSO */}
-        <div className="flex items-center justify-between mb-8 px-2">
-            {[1, 2, 3, 4].map(i => (
-                <div key={i} className={`h-1 flex-1 mx-1 rounded-full transition-all duration-500 ${step >= i ? 'bg-[#D4AF37]' : 'bg-[#222]'}`} />
-            ))}
+  const renderIdentification = () => (
+    <div className="space-y-6 animate-fade-in">
+        <div className="text-center mb-6">
+            <h2 className="text-xl font-bold text-[#1a1a1a] font-egyptian">Seus Dados</h2>
+            <p className="text-[#666] text-sm">Informe seus dados para contato.</p>
         </div>
 
-        {/* NAVEGAÇÃO TOPO */}
-        {step > 1 && (
+        <form onSubmit={handleFinishBooking} className="space-y-4">
+            <div>
+                <label className="text-xs font-bold text-[#888] uppercase mb-1 flex items-center gap-2"><UserIcon className="w-3 h-3"/> Nome Completo</label>
+                <input 
+                    required
+                    className="input-field w-full bg-white border-[#ddd] text-[#1a1a1a] p-3 rounded-xl focus:border-[--primary] outline-none shadow-sm"
+                    placeholder="Seu nome"
+                    value={clientData.name}
+                    onChange={e => setClientData({...clientData, name: e.target.value})}
+                />
+            </div>
+            <div>
+                <label className="text-xs font-bold text-[#888] uppercase mb-1 flex items-center gap-2"><Phone className="w-3 h-3"/> WhatsApp / Telefone</label>
+                <input 
+                    required
+                    type="tel"
+                    className="input-field w-full bg-white border-[#ddd] text-[#1a1a1a] p-3 rounded-xl focus:border-[--primary] outline-none shadow-sm"
+                    placeholder="(00) 00000-0000"
+                    value={clientData.phone}
+                    onChange={e => setClientData({...clientData, phone: e.target.value})}
+                />
+            </div>
+            <div>
+                <label className="text-xs font-bold text-[#888] uppercase mb-1 flex items-center gap-2"><Mail className="w-3 h-3"/> E-mail (Opcional)</label>
+                <input 
+                    type="email"
+                    className="input-field w-full bg-white border-[#ddd] text-[#1a1a1a] p-3 rounded-xl focus:border-[--primary] outline-none shadow-sm"
+                    placeholder="seu@email.com"
+                    value={clientData.email}
+                    onChange={e => setClientData({...clientData, email: e.target.value})}
+                />
+            </div>
+
             <button 
-                onClick={() => setStep(step - 1)} 
-                className="flex items-center gap-2 text-[#666] hover:text-white text-xs font-bold mb-4"
+                type="submit"
+                disabled={saving}
+                className="w-full py-4 rounded-xl font-bold text-white shadow-lg hover:-translate-y-1 transition uppercase tracking-widest mt-2 flex items-center justify-center gap-2"
+                style={{ backgroundColor: primaryColor }}
             >
-                <ChevronLeft className="w-4 h-4" /> VOLTAR
+                {saving ? 'Confirmando...' : 'FINALIZAR AGENDAMENTO'}
             </button>
+        </form>
+    </div>
+  );
+
+  const renderSuccess = () => (
+    <div className="text-center space-y-6 animate-fade-in py-10">
+        <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto shadow-sm animate-bounce-slow">
+            <CheckCircle className="w-12 h-12 text-green-600" />
+        </div>
+        
+        <div>
+            <h2 className="text-3xl font-black text-[#1a1a1a] mb-2 font-egyptian">Sucesso!</h2>
+            <p className="text-[#666] max-w-xs mx-auto">
+                Seu agendamento foi realizado. Te esperamos lá!
+            </p>
+        </div>
+
+        <div className="bg-white border border-[#eee] p-4 rounded-xl inline-block text-left w-full shadow-sm">
+            <p className="text-xs text-[#888] uppercase font-bold mb-1">Data</p>
+            <p className="text-[#1a1a1a] font-bold text-lg mb-3">
+                 {new Date(selectedDate + 'T00:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'short' })} às {selectedTime}
+            </p>
+            <p className="text-xs text-[#888] uppercase font-bold mb-1">Profissional</p>
+            <p className="text-[#1a1a1a] font-bold">
+                {selectedProfessional === 'any' ? 'Primeiro Disponível' : selectedProfessional?.name}
+            </p>
+        </div>
+
+        <button 
+            onClick={() => window.location.reload()}
+            className="text-[--primary] font-bold text-sm hover:underline"
+        >
+            Fazer outro agendamento
+        </button>
+    </div>
+  );
+
+  if(loading) return <div className="p-10 text-center text-[#888] animate-pulse">Carregando agenda...</div>;
+
+  return (
+    <div className="max-w-xl mx-auto px-6 py-8 min-h-[60vh]">
+        
+        {/* BARRA DE PROGRESSO */}
+        {step < 6 && (
+            <div className="flex items-center gap-2 mb-8">
+                {step > 1 && (
+                    <button onClick={() => setStep(step - 1)} className="p-2 hover:bg-[#eee] rounded-full text-[#666] transition">
+                        <ChevronLeft className="w-5 h-5" />
+                    </button>
+                )}
+                <div className="flex-1 flex gap-1 h-1">
+                    {[1, 2, 3, 4, 5].map(i => (
+                        <div key={i} className={`flex-1 rounded-full transition-all duration-500 ${step >= i ? 'bg-[--primary]' : 'bg-[#e0e0e0]'}`} />
+                    ))}
+                </div>
+                <span className="text-[10px] font-bold text-[#999]">PASSO {step}/5</span>
+            </div>
         )}
 
-        {/* CONTEÚDO DINÂMICO */}
-        <div className="bg-[#0a0a0a] rounded-2xl">
+        {/* CONTAINER FLUTUANTE (BRANCO COM SOMBRA) */}
+        <div className="bg-white/50 backdrop-blur-sm border border-white rounded-3xl shadow-xl p-4 md:p-8">
             {step === 1 && renderServices()}
             {step === 2 && renderProfessionals()}
             {step === 3 && renderDateTime()}
             {step === 4 && renderSummary()}
+            {step === 5 && renderIdentification()}
+            {step === 6 && renderSuccess()}
         </div>
     </div>
   );

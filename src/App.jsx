@@ -4,7 +4,6 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 // --- LAYOUTS ---
 import AdminLayout from './layouts/AdminLayout';
 import ClientLayout from './layouts/ClientLayout';
-import BookingWizard from './pages/client/BookingWizard';
 
 // --- PÁGINAS ADMIN (Gestão) ---
 import Login from './pages/Login';
@@ -18,12 +17,12 @@ import SuperAdmin from './pages/SuperAdmin';
 
 // --- PÁGINAS CLIENTE (Público) ---
 import ClientHome from './pages/client/ClientHome';
-import MarketplaceHome from './pages/client/MarketplaceHome'; // NOVA IMPORTAÇÃO
+import MarketplaceHome from './pages/client/MarketplaceHome';
+import BookingWizard from './pages/client/BookingWizard'; // <--- IMPORTANTE: IMPORTAR O WIZARD
 
 // Função para detectar se estamos no ambiente ADMIN
 const isAdminDomain = () => {
   const hostname = window.location.hostname;
-  // Retorna TRUE se a URL tiver 'admin' (ex: admin.localhost ou curlyadmin.com)
   return hostname.includes('admin') || hostname.includes('curlyadmin');
 };
 
@@ -35,53 +34,42 @@ function App() {
       <Routes>
         
         {/* =======================================================
-            CENÁRIO 1: AMBIENTE ADMIN (curlyadmin.com)
+            CENÁRIO 1: AMBIENTE ADMIN
            ======================================================= */}
         {isAdmin ? (
           <>
-            {/* Raiz do Admin: Manda para o Login da loja Mestra (Temporário) */}
             <Route path="/" element={<Navigate to="/abduch/login" replace />} />
-
-            {/* Rota de Login */}
             <Route path="/:shopId/login" element={<Login />} />
 
-            {/* Painel Administrativo */}
             <Route path="/:shopId/admin" element={<AdminLayout />}>
               <Route index element={<Navigate to="appointments" replace />} />
-              
               <Route path="services" element={<Services />} />
               <Route path="stock" element={<Stock />} />
               <Route path="finance" element={<Finance />} />
               <Route path="users" element={<Users />} />
               <Route path="appointments" element={<Appointments />} />
               <Route path="store" element={<Store />} />
-              
               <Route path="superadmin" element={<SuperAdmin />} />
             </Route>
           </>
         ) : (
           
         /* =======================================================
-            CENÁRIO 2: AMBIENTE CLIENTE / MARKETPLACE (curlyclients.com)
+            CENÁRIO 2: AMBIENTE CLIENTE / MARKETPLACE
            ======================================================= */
           <>
-             {/* ROTA RAIZ: Agora mostra a HOME DO MARKETPLACE */}
              <Route path="/" element={<MarketplaceHome />} />
-             
-             {/* Futura rota de Categorias */}
-             <Route path="/categorias" element={<div className="p-10 text-white">Listagem de Categorias (Em Breve)</div>} />
+             <Route path="/categorias" element={<div className="p-10 text-white">Listagem de Categorias</div>} />
 
-             {/* Rota da Loja Específica (Site Personalizado) */}
              <Route path="/:shopId" element={<ClientLayout />}>
                 <Route index element={<ClientHome />} />
                 
-                {/* Wizard de Agendamento */}
-                <Route path="agendar" element={<div className="h-screen flex items-center justify-center text-white font-bold">Assistente de Agendamento (Em Breve)</div>} />
+                {/* AQUI ESTAVA O ERRO: Agora chamamos o BookingWizard */}
+                <Route path="agendar" element={<BookingWizard />} />
              </Route>
           </>
         )}
 
-        {/* Fallback Global (404) */}
         <Route path="*" element={<Navigate to="/" />} />
 
       </Routes>

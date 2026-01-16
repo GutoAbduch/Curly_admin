@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Outlet, useParams, Link } from 'react-router-dom';
+import { Outlet, useParams, Link, useNavigate } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { Instagram, MapPin, Phone, Calendar } from 'lucide-react';
+import { Instagram, MapPin, Phone, Calendar, Home, User } from 'lucide-react';
 
 export default function ClientLayout() {
   const { shopId } = useParams();
+  const navigate = useNavigate();
   const [storeConfig, setStoreConfig] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -21,63 +22,94 @@ export default function ClientLayout() {
     loadConfig();
   }, [shopId]);
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#050505] text-[#D4AF37] font-bold">Carregando...</div>;
+  // Loading com fundo claro
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#F9F7F2] text-[#D4AF37] font-bold">Carregando experiência...</div>;
 
-  if (!storeConfig) return <div className="min-h-screen flex items-center justify-center bg-[#050505] text-white">Loja não encontrada.</div>;
+  // Erro com fundo claro
+  if (!storeConfig) return <div className="min-h-screen flex items-center justify-center bg-[#F9F7F2] text-black">Loja não encontrada.</div>;
 
   const primaryColor = storeConfig.primaryColor || '#D4AF37'; 
 
   return (
-    <div className="min-h-screen flex flex-col font-sans bg-[#050505] text-white" style={{ '--primary': primaryColor }}>
+    // MUDANÇA AQUI: bg-[#050505] -> bg-[#F9F7F2] e text-white -> text-[#1a1a1a]
+    <div className="min-h-screen flex flex-col font-sans bg-[#F9F7F2] text-[#1a1a1a]" 
+         style={{ 
+             '--primary': primaryColor,
+             backgroundImage: 'radial-gradient(circle at 50% 0%, #ffffff 0%, #F9F7F2 80%)' // Efeito de luz suave
+         }}>
       
-      {/* HEADER */}
-      <header className="fixed top-0 left-0 right-0 z-50 bg-[#0a0a0a]/95 backdrop-blur-md border-b border-[#222] shadow-sm">
-         <div className="max-w-md mx-auto px-4 h-16 flex items-center justify-between">
-             <div className="flex items-center gap-3">
-                {storeConfig.logoUrl ? (
-                    <img src={storeConfig.logoUrl} className="h-10 w-10 rounded-full object-cover border border-[#333]" alt="Logo" />
-                ) : (
-                    <div className="h-10 w-10 rounded-full bg-[#222] flex items-center justify-center font-bold text-[--primary]">
-                        {storeConfig.name?.charAt(0)}
-                    </div>
-                )}
-                <h1 className="font-bold text-sm tracking-wide truncate max-w-[150px] text-white">{storeConfig.name}</h1>
-             </div>
+      {/* HEADER FLUTUANTE */}
+      <header className="fixed top-0 left-0 right-0 z-50 px-4 py-3 pointer-events-none">
+         <div className="max-w-5xl mx-auto flex justify-between items-center">
              
-             <Link 
-                to={`/${shopId}/agendar`} 
-                className="px-5 py-2 text-[10px] font-bold rounded-full shadow-[0_0_10px_rgba(212,175,55,0.2)] hover:shadow-[0_0_15px_rgba(212,175,55,0.4)] transition uppercase tracking-widest text-black"
-                style={{ backgroundColor: primaryColor }}
+             {/* Botão Voltar para Marketplace */}
+             <button 
+                onClick={() => navigate('/')}
+                className="pointer-events-auto bg-white/80 backdrop-blur-md border border-[#eee] text-[#333] hover:text-[--primary] hover:border-[--primary] px-4 py-2 rounded-full shadow-lg flex items-center gap-2 text-xs font-bold transition-all transform hover:scale-105"
              >
-                Agendar
-             </Link>
+                <Home className="w-4 h-4" /> 
+                <span className="hidden sm:inline">Início</span>
+             </button>
+
+             {/* Botão Login */}
+             <button 
+                onClick={() => alert("O Login Unificado será implementado na próxima etapa!")}
+                className="pointer-events-auto bg-black/90 text-white hover:bg-[--primary] px-5 py-2 rounded-full shadow-lg flex items-center gap-2 text-xs font-bold transition-all transform hover:scale-105"
+             >
+                <User className="w-4 h-4" /> 
+                <span>Entrar</span>
+             </button>
+
          </div>
       </header>
 
-      <main className="flex-1 pt-16">
+      {/* CONTEÚDO */}
+      <main className="flex-1 relative">
         <Outlet context={{ storeConfig, shopId }} />
       </main>
 
-      {/* FOOTER */}
-      <footer className="bg-[#0a0a0a] border-t border-[#222] pb-10 pt-8 mt-auto">
-          <div className="max-w-md mx-auto px-6 text-center space-y-6">
-              <h2 className="text-xl font-black font-egyptian tracking-wider text-[#eee]">{storeConfig.name}</h2>
-              <div className="space-y-3 text-sm text-[#888]">
-                  {storeConfig.address && <p className="flex items-center justify-center gap-2"><MapPin className="w-4 h-4"/> {storeConfig.address}</p>}
-                  {storeConfig.phone && <p className="flex items-center justify-center gap-2"><Phone className="w-4 h-4"/> {storeConfig.phone}</p>}
+      {/* FOOTER CLARO */}
+      <footer className="bg-[#fff] border-t border-[#eee] pb-12 pt-16 mt-auto relative overflow-hidden">
+          <div className="max-w-md mx-auto px-6 text-center space-y-8 relative z-10">
+              
+              <div className="space-y-4">
+                  <h2 className="text-2xl font-black font-egyptian tracking-widest text-[#1a1a1a]">
+                      {storeConfig.name}
+                  </h2>
+                  
+                  <div className="space-y-2 text-sm text-[#555]">
+                      {storeConfig.address && (
+                          <p className="flex items-center justify-center gap-2">
+                              <MapPin className="w-3 h-3 text-[--primary]" /> {storeConfig.address}
+                          </p>
+                      )}
+                      {storeConfig.phone && (
+                          <p className="flex items-center justify-center gap-2">
+                              <Phone className="w-3 h-3 text-[--primary]" /> {storeConfig.phone}
+                          </p>
+                      )}
+                  </div>
               </div>
-              <div className="flex justify-center gap-4 pt-2">
+
+              <div className="flex justify-center gap-6">
                   {storeConfig.instagram && (
-                      <a href={`https://instagram.com/${storeConfig.instagram.replace('@', '')}`} target="_blank" rel="noreferrer" className="w-10 h-10 flex items-center justify-center rounded-full bg-[#111] border border-[#222] hover:border-[--primary] hover:text-[--primary] transition">
-                          <Instagram className="w-5 h-5" />
+                      <a href={`https://instagram.com/${storeConfig.instagram.replace('@', '')}`} target="_blank" rel="noreferrer" className="group">
+                          <div className="w-12 h-12 flex items-center justify-center rounded-full bg-[#fcfcfc] border border-[#ddd] shadow-sm group-hover:border-[--primary] group-hover:text-[--primary] transition-all duration-300">
+                              <Instagram className="w-5 h-5 text-[#888] group-hover:text-[--primary] transition-colors" />
+                          </div>
                       </a>
                   )}
-                  <Link to={`/${shopId}/agendar`} className="w-10 h-10 flex items-center justify-center rounded-full bg-[#111] border border-[#222] hover:border-[--primary] hover:text-[--primary] transition">
-                      <Calendar className="w-5 h-5" />
+                  <Link to={`/${shopId}/agendar`} className="group">
+                      <div className="w-12 h-12 flex items-center justify-center rounded-full bg-[#fcfcfc] border border-[#ddd] shadow-sm group-hover:border-[--primary] group-hover:text-[--primary] transition-all duration-300">
+                          <Calendar className="w-5 h-5 text-[#888] group-hover:text-[--primary] transition-colors" />
+                      </div>
                   </Link>
               </div>
-              <div className="pt-6 mt-4 border-t border-[#1a1a1a]">
-                  <p className="text-[10px] text-[#333] uppercase tracking-widest">Powered by Curly SaaS</p>
+              
+              <div className="pt-10 mt-8 border-t border-[#f0f0f0] flex flex-col items-center justify-center gap-2">
+                  <p className="text-[10px] text-[#999] uppercase tracking-[0.3em]">
+                      Powered by Curly
+                  </p>
               </div>
           </div>
       </footer>
