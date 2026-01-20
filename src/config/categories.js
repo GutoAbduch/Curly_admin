@@ -27,8 +27,8 @@ export const BUSINESS_CATEGORIES = [
     {
       id: 'face_olhar',
       label: 'Face e Olhar',
-      // NOVA IMAGEM: Foco em sobrancelha/olho
-      image: 'https://images.unsplash.com/photo-1588510883731-013165b5be37?q=80&w=2070&auto=format&fit=crop',
+      // NOVA IMAGEM: Foco em sobrancelha e maquiagem (Close-up)
+      image: 'https://images.unsplash.com/photo-1596704017254-9b121068fb31?q=80&w=2070&auto=format&fit=crop',
       subcategories: [
         'Design de Sobrancelhas',
         'Studio de Cílios',
