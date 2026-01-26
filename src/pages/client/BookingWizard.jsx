@@ -1,12 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { db } from '../../config/firebase';
-import { collection, getDocs, addDoc, serverTimestamp } from 'firebase/firestore'; 
+import { collection, getDocs, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore'; // ADICIONADO doc e getDoc
 import { Calendar, Clock, User, Scissors, ChevronLeft, CheckCircle, AlertCircle, Phone, Mail, User as UserIcon } from 'lucide-react';
+import { useClientAuth } from '../../context/ClientAuthContext'; // IMPORTAÇÃO DA AUTENTICAÇÃO
 
 export default function BookingWizard() {
   const { storeConfig, shopId } = useOutletContext();
   const primaryColor = storeConfig?.primaryColor || '#D4AF37';
+
+  // AUTENTICAÇÃO
+  const { client } = useClientAuth();
 
   // ESTADOS DO FLUXO
   const [step, setStep] = useState(1);
@@ -26,31 +30,27 @@ export default function BookingWizard() {
   // DADOS DO CLIENTE
   const [clientData, setClientData] = useState({ name: '', phone: '', email: '' });
 
-  // CARREGAR DADOS INICIAIS (COM FILTRO NOVO)
+  // 1. CARREGAR DADOS DA LOJA
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // 1. Serviços
         const servicesRef = collection(db, `artifacts/${shopId}/public/data/services`);
         const sSnap = await getDocs(servicesRef);
         setServices(sSnap.docs.map(d => ({ id: d.id, ...d.data() })));
 
-        // 2. Profissionais (ATUALIZADO: FILTRO DE CARGOS)
         const usersRef = collection(db, `artifacts/${shopId}/public/data/users`);
         const uSnap = await getDocs(usersRef);
         
+        // Filtro de Profissionais (Remove recepcionistas/admin)
         const validPros = uSnap.docs
             .map(d => ({ id: d.id, ...d.data() }))
             .filter(u => {
-                // Filtra quem não tem nome e quem é de cargos administrativos
                 const role = u.role || '';
-                // Lista de cargos que NÃO devem aparecer na agenda
                 const ignoredRoles = ['Financeiro', 'Recepcionista', 'Admin']; 
                 return u.name && !ignoredRoles.includes(role);
             });
 
         setProfessionals(validPros);
-
       } catch (error) {
         console.error("Erro ao carregar dados:", error);
       } finally {
@@ -60,7 +60,29 @@ export default function BookingWizard() {
     fetchData();
   }, [shopId]);
 
-  // LÓGICA DE HORÁRIOS (MANTIDA IDÊNTICA)
+  // 2. AUTO-PREENCHIMENTO SE ESTIVER LOGADO
+  useEffect(() => {
+    const fillUserData = async () => {
+        if (client) {
+            try {
+                // Tenta buscar o telefone salvo na coleção 'clients' global
+                const clientDoc = await getDoc(doc(db, 'clients', client.uid));
+                const savedPhone = clientDoc.exists() ? clientDoc.data().phone : '';
+
+                setClientData({
+                    name: client.displayName || '',
+                    email: client.email || '',
+                    phone: savedPhone || ''
+                });
+            } catch (error) {
+                console.error("Erro ao buscar dados do cliente:", error);
+            }
+        }
+    };
+    fillUserData();
+  }, [client]);
+
+  // LÓGICA DE HORÁRIOS
   const generateTimeSlots = (dateString) => {
     if (!storeConfig || !storeConfig.schedule) return [];
     const date = new Date(dateString + 'T00:00:00'); 
@@ -93,7 +115,7 @@ export default function BookingWizard() {
 
   const availableSlots = selectedDate ? generateTimeSlots(selectedDate) : [];
 
-  // SALVAR NO FIREBASE (MANTIDA IDÊNTICA)
+  // SALVAR NO FIREBASE
   const handleFinishBooking = async (e) => {
       e.preventDefault();
       if(!clientData.name || !clientData.phone) return alert("Por favor, preencha nome e telefone.");
@@ -109,9 +131,13 @@ export default function BookingWizard() {
               professionalName: selectedProfessional === 'any' ? 'Primeiro Disponível' : selectedProfessional.name,
               date: selectedDate,
               time: selectedTime,
+              
+              // Dados do Cliente
               clientName: clientData.name,
               clientPhone: clientData.phone,
               clientEmail: clientData.email,
+              clientId: client ? client.uid : null, // Vincula o ID se estiver logado
+              
               status: 'pending',
               createdAt: serverTimestamp()
           });
@@ -124,7 +150,7 @@ export default function BookingWizard() {
       }
   };
 
-  // --- RENDERS (VISUAL NOVO: CLARO & LUXO) ---
+  // --- RENDERS ---
 
   const renderServices = () => (
     <div className="space-y-4 animate-fade-in">
@@ -300,6 +326,20 @@ export default function BookingWizard() {
             <p className="text-[#666] text-sm">Informe seus dados para contato.</p>
         </div>
 
+        {/* MENSAGEM SE ESTIVER LOGADO */}
+        {client && (
+            <div className="bg-[#fcfcfc] border border-[#eee] p-4 rounded-xl mb-4 flex items-center gap-3 shadow-sm">
+                <div className="w-10 h-10 rounded-full bg-[#f0f0f0] flex items-center justify-center">
+                   <UserIcon className="w-5 h-5 text-[#888]" />
+                </div>
+                <div>
+                    <p className="text-sm font-bold text-[#1a1a1a]">Agendando como {client.displayName}</p>
+                    <p className="text-xs text-[#666]">Seus dados foram preenchidos automaticamente.</p>
+                </div>
+                <CheckCircle className="w-5 h-5 text-green-500 ml-auto" />
+            </div>
+        )}
+
         <form onSubmit={handleFinishBooking} className="space-y-4">
             <div>
                 <label className="text-xs font-bold text-[#888] uppercase mb-1 flex items-center gap-2"><UserIcon className="w-3 h-3"/> Nome Completo</label>
@@ -309,6 +349,7 @@ export default function BookingWizard() {
                     placeholder="Seu nome"
                     value={clientData.name}
                     onChange={e => setClientData({...clientData, name: e.target.value})}
+                    // Se estiver logado, não bloqueamos, mas já vem preenchido
                 />
             </div>
             <div>
@@ -400,7 +441,7 @@ export default function BookingWizard() {
             </div>
         )}
 
-        {/* CONTAINER FLUTUANTE (BRANCO COM SOMBRA) */}
+        {/* CONTAINER FLUTUANTE */}
         <div className="bg-white/50 backdrop-blur-sm border border-white rounded-3xl shadow-xl p-4 md:p-8">
             {step === 1 && renderServices()}
             {step === 2 && renderProfessionals()}
