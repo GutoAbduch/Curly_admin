@@ -1,11 +1,12 @@
 # Curly Admin 💇‍♀️
 
-Painel administrativo desenvolvido para gerenciamento de [ex: agendamentos/clientes/produtos] focado no nicho de [ex: salões especializados em cabelos cacheados].
+Painel administrativo desenvolvido para gestão completa de lojas, focado no nicho de estética.
 
-O objetivo principal desse projeto foi resolver o problema de [ex: organizar a agenda que antes era feita no papel] e, ao mesmo tempo, praticar a integração entre **[Frontend]** e **[Backend]**.
+O objetivo principal desse projeto foi resolver o problema de desinformação, falta de controle e gestão e, ao mesmo tempo, praticar a integração entre **[Frontend]** e **[Backend]**.
 
 ## 📸 Preview
-*(Coloque um print da tela principal aqui. Nada passa mais credibilidade humana do que mostrar que o negócio roda visualmente)*
+
+(peendente foto inicial do sistema)
 
 ## 🛠️ Stack Utilizada
 
@@ -14,7 +15,7 @@ O objetivo principal desse projeto foi resolver o problema de [ex: organizar a a
 * **Banco:** [Ex: PostgreSQL / Supabase / Firebase]
 * **Auth:** [Ex: JWT / NextAuth]
 
-## 🚀 Rodando localmente
+## Rodando localmente
 
 1. Clone o repositório:
 ```bash
