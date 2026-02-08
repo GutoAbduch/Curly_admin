@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, signOut } from 'firebase/auth';
-import { auth, db } from '../config/firebase'; 
+import { auth, db, MASTER_EMAIL } from '../config/firebase'; // <--- IMPORTAMOS O MASTER_EMAIL AQUI
 import { useNavigate, useParams } from 'react-router-dom';
 import { doc, setDoc, addDoc, collection, serverTimestamp, getDoc } from 'firebase/firestore';
 import { Scissors, AlertTriangle, CheckCircle } from 'lucide-react'; 
@@ -50,7 +50,13 @@ export default function Login() {
         const userCred = await signInWithEmailAndPassword(auth, cleanEmail, loginPass); 
         const user = userCred.user;
 
-        // VERIFICAÇÃO DE STATUS (PENDING)
+        // VERIFICAÇÃO SE É O SUPER ADMIN (Usando a variável segura)
+        if (cleanEmail === MASTER_EMAIL) {
+             navigate(`/${shopId}/admin/superadmin`);
+             return; // Encerra aqui para não rodar a lógica de funcionário abaixo
+        }
+
+        // VERIFICAÇÃO DE STATUS (PENDING) PARA FUNCIONÁRIOS NORMAIS
         const userDocRef = doc(db, `artifacts/${shopId}/public/data/users/${user.uid}`);
         const userDoc = await getDoc(userDocRef);
 
@@ -62,7 +68,7 @@ export default function Login() {
             }
         }
 
-        navigate(`/${shopId}/admin/services`); 
+        navigate(`/${shopId}/admin/appointments`); 
     } catch (err) { 
         console.error(err);
         if (err.message.includes("análise")) {
